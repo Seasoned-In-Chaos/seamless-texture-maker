@@ -1,14 +1,17 @@
 """
 Main seamless texture generation algorithm.
 Orchestrates offset mapping, edge blending, and inpainting.
+Optimized with JIT compilation and caching for real-time performance.
 """
 import numpy as np
 import cv2
 from .offset_mapping import offset_image, reverse_offset, create_cross_mask
 from .edge_blending import blend_seams, create_blend_mask
+from .edge_blending_jit import blend_seams_fast
 from .materialize_methods import synthesis_overlap, synthesis_splat
 from .inpainting import smart_seam_inpaint
 from .gpu_utils import GPUAccelerator, is_cuda_available
+from .cache import ResultCache, hash_image
 
 class SeamlessProcessor:
     """
@@ -20,6 +23,11 @@ class SeamlessProcessor:
         self._original_image = None
         self._preview_image = None
         self._processed_image = None
+        self._image_hash = None
+        
+        # Performance optimizations
+        self._cache = ResultCache(max_size=50)
+        self.use_jit = True  # Use JIT-compiled functions
         
         # Default parameters
         self.method = 'standard' # standard, overlap, splat
@@ -60,10 +68,13 @@ class SeamlessProcessor:
         
         self._processed_image = None
 
-        # Cache preview image for live updates (smaller for speed)
+        # Cache preview image for live updates (smaller for maximum speed)
         if self._original_image is not None:
+             # Hash image for cache key
+             self._image_hash = hash_image(self._original_image)
+             
              h, w = self._original_image.shape[:2]
-             max_dim = 384  # Reduced from 512 for faster live preview
+             max_dim = 256  # Reduced to 256px for ultra-fast preview
              if max(h, w) > max_dim:
                  scale = max_dim / max(h, w)
                  new_w = int(w * scale)
@@ -74,7 +85,7 @@ class SeamlessProcessor:
     
     def process(self, image=None, preview=False, params=None):
         """
-        Process the image to create a seamless texture.
+        Process the image to create a seamless texture with caching.
         
         Args:
             image: Optional input image. If None, uses previously loaded image.
@@ -93,6 +104,13 @@ class SeamlessProcessor:
         if self._original_image is None:
             raise ValueError("No image loaded. Call load_image() first.")
         
+        # Check cache first (for preview mode)
+        if preview and self._image_hash:
+            cache_params = self._get_cache_params()
+            cached_result = self._cache.get(cache_params, self._image_hash)
+            if cached_result is not None:
+                return cached_result
+        
         # Prepare source image
         if preview:
             if self._preview_image is None:
@@ -104,11 +122,35 @@ class SeamlessProcessor:
         
         # Choose method
         if self.method == 'overlap':
-            return self._process_overlap(img)
+            result = self._process_overlap(img)
         elif self.method == 'splat':
-            return self._process_splat(img)
+            result = self._process_splat(img)
         else:
-            return self._process_standard(img)
+            result = self._process_standard(img)
+        
+        # Cache preview results
+        if preview and self._image_hash:
+            cache_params = self._get_cache_params()
+            self._cache.set(cache_params, result, self._image_hash)
+        
+        return result
+    
+    def _get_cache_params(self):
+        """Get current parameters for cache key."""
+        return {
+            'method': self.method,
+            'blend_strength': round(self.blend_strength, 3),
+            'seam_smoothness': round(self.seam_smoothness, 3),
+            'detail_preservation': round(self.detail_preservation, 3),
+            'overlap_x': round(self.overlap_x, 3),
+            'overlap_y': round(self.overlap_y, 3),
+            'edge_falloff': round(self.edge_falloff, 3),
+            'splat_scale': round(self.splat_scale, 2),
+            'splat_rotation': int(self.splat_rotation),
+            'splat_random_rotation': round(self.splat_random_rotation, 3),
+            'splat_wobble': round(self.splat_wobble, 3),
+            'splat_randomize': int(self.splat_randomize)
+        }
             
     def _process_overlap(self, img):
         """Process using Overlap method."""
@@ -159,13 +201,20 @@ class SeamlessProcessor:
             method='telea'
         )
         
-        # Step 4: Apply edge blending for smooth transitions
-        blended = blend_seams(
-            inpainted,
-            blend_strength=self.blend_strength,
-            smoothness=self.seam_smoothness,
-            symmetric=self.symmetric_blending
-        )
+        # Step 4: Apply edge blending for smooth transitions (JIT-optimized)
+        if self.use_jit:
+            blended = blend_seams_fast(
+                inpainted,
+                blend_strength=self.blend_strength,
+                smoothness=self.seam_smoothness
+            )
+        else:
+            blended = blend_seams(
+                inpainted,
+                blend_strength=self.blend_strength,
+                smoothness=self.seam_smoothness,
+                symmetric=self.symmetric_blending
+            )
         
         # Step 5: Reverse the offset to restore original positioning
         result = reverse_offset(blended, 0.5, 0.5)
