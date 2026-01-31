@@ -210,16 +210,16 @@ class MainWindow(QMainWindow):
         self.progress.hide()
         self.status_bar.addPermanentWidget(self.progress)
 
-        # Update timer for live preview debounce
+        # Update timer for live preview - 16ms for 60fps feel
         self.update_timer = QTimer()
         self.update_timer.setSingleShot(True)
-        self.update_timer.setInterval(50)  # 50ms for instant feel
+        self.update_timer.setInterval(16)  # 16ms = ~60fps
         self.update_timer.timeout.connect(self._request_live_preview)
         
         # Full resolution timer (when slider released)
         self.fullres_timer = QTimer()
         self.fullres_timer.setSingleShot(True)
-        self.fullres_timer.setInterval(400)  # 400ms after slider release
+        self.fullres_timer.setInterval(300)  # Reduced to 300ms
         self.fullres_timer.timeout.connect(self._process_texture)
     
     def _connect_signals(self):
