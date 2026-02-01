@@ -3784,6 +3784,7 @@ imported by:
  &#8226;   <a href="#app.gui.controls">app.gui.controls</a>
  &#8226;   <a href="#app.gui.image_viewer">app.gui.image_viewer</a>
  &#8226;   <a href="#app.gui.main_window">app.gui.main_window</a>
+ &#8226;   <a href="#app.gui.normal_controls">app.gui.normal_controls</a>
  &#8226;   <a href="#main.py">main.py</a>
 
   </div>
@@ -3838,6 +3839,7 @@ imported by:
     <a href="#app.gui.controls">app.gui.controls</a>
  &#8226;   <a href="#app.gui.image_viewer">app.gui.image_viewer</a>
  &#8226;   <a href="#app.gui.main_window">app.gui.main_window</a>
+ &#8226;   <a href="#app.gui.normal_controls">app.gui.normal_controls</a>
  &#8226;   <a href="#main.py">main.py</a>
 
   </div>
@@ -5223,6 +5225,7 @@ imported by:
  &#8226;   <a href="#app.core.inpainting">app.core.inpainting</a>
  &#8226;   <a href="#app.core.materialize_methods">app.core.materialize_methods</a>
  &#8226;   <a href="#app.core.materialize_methods_jit">app.core.materialize_methods_jit</a>
+ &#8226;   <a href="#app.core.normal_generator">app.core.normal_generator</a>
  &#8226;   <a href="#app.core.offset_mapping">app.core.offset_mapping</a>
  &#8226;   <a href="#app.core.seamless">app.core.seamless</a>
 
@@ -5364,6 +5367,26 @@ imported by:
 </div>
 
 <div class="node">
+  <a name="app.core.normal_generator"></a>
+  <a target="code" href="///E:/WEBSITE/seamless-texture-maker/app/core/normal_generator.py" type="text/plain"><tt>app.core.normal_generator</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#app.core">app.core</a>
+ &#8226;   <a href="#cv2">cv2</a>
+ &#8226;   <a href="#numba">numba</a>
+ &#8226;   <a href="#numpy">numpy</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#app.gui.image_viewer">app.gui.image_viewer</a>
+ &#8226;   <a href="#app.gui.main_window">app.gui.main_window</a>
+
+  </div>
+
+</div>
+
+<div class="node">
   <a name="app.core.offset_mapping"></a>
   <a target="code" href="///E:/WEBSITE/seamless-texture-maker/app/core/offset_mapping.py" type="text/plain"><tt>app.core.offset_mapping</tt></a>
 <span class="moduletype">SourceModule</span>  <div class="import">
@@ -5418,6 +5441,7 @@ imported by:
     <a href="#app.gui.controls">app.gui.controls</a>
  &#8226;   <a href="#app.gui.image_viewer">app.gui.image_viewer</a>
  &#8226;   <a href="#app.gui.main_window">app.gui.main_window</a>
+ &#8226;   <a href="#app.gui.normal_controls">app.gui.normal_controls</a>
  &#8226;   <a href="#app.gui.styles">app.gui.styles</a>
 
   </div>
@@ -5437,6 +5461,7 @@ imports:
   <div class="import">
 imported by:
     <a href="#app.gui.main_window">app.gui.main_window</a>
+ &#8226;   <a href="#app.gui.normal_controls">app.gui.normal_controls</a>
 
   </div>
 
@@ -5450,9 +5475,11 @@ imports:
     <a href="#PyQt6.QtCore">PyQt6.QtCore</a>
  &#8226;   <a href="#PyQt6.QtGui">PyQt6.QtGui</a>
  &#8226;   <a href="#PyQt6.QtWidgets">PyQt6.QtWidgets</a>
+ &#8226;   <a href="#app.core.normal_generator">app.core.normal_generator</a>
  &#8226;   <a href="#app.gui">app.gui</a>
  &#8226;   <a href="#cv2">cv2</a>
  &#8226;   <a href="#numpy">numpy</a>
+ &#8226;   <a href="#traceback">traceback</a>
 
   </div>
   <div class="import">
@@ -5472,20 +5499,42 @@ imports:
  &#8226;   <a href="#PyQt6.QtGui">PyQt6.QtGui</a>
  &#8226;   <a href="#PyQt6.QtWidgets">PyQt6.QtWidgets</a>
  &#8226;   <a href="#app.core.gpu_utils">app.core.gpu_utils</a>
+ &#8226;   <a href="#app.core.normal_generator">app.core.normal_generator</a>
  &#8226;   <a href="#app.core.seamless">app.core.seamless</a>
  &#8226;   <a href="#app.gui">app.gui</a>
  &#8226;   <a href="#app.gui.controls">app.gui.controls</a>
  &#8226;   <a href="#app.gui.image_viewer">app.gui.image_viewer</a>
+ &#8226;   <a href="#app.gui.normal_controls">app.gui.normal_controls</a>
  &#8226;   <a href="#app.gui.styles">app.gui.styles</a>
  &#8226;   <a href="#app.utils.config">app.utils.config</a>
  &#8226;   <a href="#app.utils.image_io">app.utils.image_io</a>
  &#8226;   <a href="#os">os</a>
  &#8226;   <a href="#time">time</a>
+ &#8226;   <a href="#traceback">traceback</a>
 
   </div>
   <div class="import">
 imported by:
     <a href="#main.py">main.py</a>
+
+  </div>
+
+</div>
+
+<div class="node">
+  <a name="app.gui.normal_controls"></a>
+  <a target="code" href="///E:/WEBSITE/seamless-texture-maker/app/gui/normal_controls.py" type="text/plain"><tt>app.gui.normal_controls</tt></a>
+<span class="moduletype">SourceModule</span>  <div class="import">
+imports:
+    <a href="#PyQt6.QtCore">PyQt6.QtCore</a>
+ &#8226;   <a href="#PyQt6.QtWidgets">PyQt6.QtWidgets</a>
+ &#8226;   <a href="#app.gui">app.gui</a>
+ &#8226;   <a href="#app.gui.controls">app.gui.controls</a>
+
+  </div>
+  <div class="import">
+imported by:
+    <a href="#app.gui.main_window">app.gui.main_window</a>
 
   </div>
 
@@ -8104,6 +8153,7 @@ imported by:
  &#8226;   <a href="#app.core.gpu_utils">app.core.gpu_utils</a>
  &#8226;   <a href="#app.core.inpainting">app.core.inpainting</a>
  &#8226;   <a href="#app.core.materialize_methods">app.core.materialize_methods</a>
+ &#8226;   <a href="#app.core.normal_generator">app.core.normal_generator</a>
  &#8226;   <a href="#app.core.seamless">app.core.seamless</a>
  &#8226;   <a href="#app.gui.image_viewer">app.gui.image_viewer</a>
  &#8226;   <a href="#app.utils.image_io">app.utils.image_io</a>
@@ -16954,6 +17004,7 @@ imports:
 imported by:
     <a href="#app.core.edge_blending_jit">app.core.edge_blending_jit</a>
  &#8226;   <a href="#app.core.materialize_methods_jit">app.core.materialize_methods_jit</a>
+ &#8226;   <a href="#app.core.normal_generator">app.core.normal_generator</a>
  &#8226;   <a href="#main.py">main.py</a>
  &#8226;   <a href="#numba">numba</a>
  &#8226;   <a href="#numba.__main__">numba.__main__</a>
@@ -40919,6 +40970,7 @@ imported by:
  &#8226;   <a href="#app.core.inpainting">app.core.inpainting</a>
  &#8226;   <a href="#app.core.materialize_methods">app.core.materialize_methods</a>
  &#8226;   <a href="#app.core.materialize_methods_jit">app.core.materialize_methods_jit</a>
+ &#8226;   <a href="#app.core.normal_generator">app.core.normal_generator</a>
  &#8226;   <a href="#app.core.offset_mapping">app.core.offset_mapping</a>
  &#8226;   <a href="#app.core.seamless">app.core.seamless</a>
  &#8226;   <a href="#app.gui.image_viewer">app.gui.image_viewer</a>
@@ -56711,6 +56763,8 @@ imports:
   <div class="import">
 imported by:
     <a href="#_distutils_hack">_distutils_hack</a>
+ &#8226;   <a href="#app.gui.image_viewer">app.gui.image_viewer</a>
+ &#8226;   <a href="#app.gui.main_window">app.gui.main_window</a>
  &#8226;   <a href="#asyncio.base_events">asyncio.base_events</a>
  &#8226;   <a href="#asyncio.base_tasks">asyncio.base_tasks</a>
  &#8226;   <a href="#asyncio.coroutines">asyncio.coroutines</a>

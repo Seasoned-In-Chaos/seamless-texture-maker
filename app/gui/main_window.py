@@ -6,15 +6,18 @@ import time
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QFileDialog, QMessageBox, QSplitter, QLabel,
-    QProgressBar, QApplication
+    QProgressBar, QApplication, QStackedWidget, QFrame, QButtonGroup,
+    QPushButton
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QTimer, QMutex
 from PyQt6.QtGui import QAction, QIcon
 
 from .image_viewer import ImageViewer
 from .controls import ControlPanel
+from .normal_controls import NormalControlPanel
 from .styles import get_dark_theme
 from ..core.seamless import SeamlessProcessor
+from ..core.normal_generator import NormalGenerator
 from ..core.gpu_utils import is_cuda_available
 from ..utils.image_io import load_image, save_image, get_output_path, get_format_filter, get_file_info
 from ..utils.config import APP_NAME, APP_VERSION, load_settings, save_settings
@@ -133,12 +136,67 @@ class MainWindow(QMainWindow):
         self.image_viewer = ImageViewer()
         splitter.addWidget(self.image_viewer)
         
-        # Control panel (right)
+        # Control Panel Side (Fixed width container)
+        control_container = QWidget()
+        control_container.setFixedWidth(320)
+        control_sidebar_layout = QVBoxLayout(control_container)
+        control_sidebar_layout.setContentsMargins(0, 0, 0, 0)
+        control_sidebar_layout.setSpacing(0)
+        
+        # Mode Switcher (Tab-like header)
+        mode_header = QFrame()
+        mode_header.setFrameShape(QFrame.Shape.StyledPanel)
+        mode_header.setStyleSheet("background-color: #252525; border-bottom: 2px solid #3d3d3d;")
+        mode_header_layout = QHBoxLayout(mode_header)
+        mode_header_layout.setContentsMargins(5, 5, 5, 5)
+        
+        self.mode_group = QButtonGroup(self)
+        self.btn_seamless = QPushButton("Seamless Maker")
+        self.btn_normal = QPushButton("Normal Map")
+        self.btn_seamless.setCheckable(True)
+        self.btn_normal.setCheckable(True)
+        self.btn_seamless.setChecked(True)
+        
+        # Style buttons to look like tabs
+        btn_style = """
+            QPushButton { 
+                background-color: transparent; 
+                border: none; 
+                padding: 8px; 
+                color: #888; 
+                font-weight: bold;
+            }
+            QPushButton:checked { 
+                color: #0098ff; 
+                border-bottom: 2px solid #0098ff;
+            }
+        """
+        self.btn_seamless.setStyleSheet(btn_style)
+        self.btn_normal.setStyleSheet(btn_style)
+        
+        self.mode_group.addButton(self.btn_seamless)
+        self.mode_group.addButton(self.btn_normal)
+        
+        mode_header_layout.addWidget(self.btn_seamless)
+        mode_header_layout.addWidget(self.btn_normal)
+        self.mode_group.idClicked.connect(self._on_mode_changed)
+        
+        control_sidebar_layout.addWidget(mode_header)
+        
+        # Stacked Widget for Controllers
+        self.control_stack = QStackedWidget()
         self.control_panel = ControlPanel()
-        splitter.addWidget(self.control_panel)
+        self.normal_panel = NormalControlPanel()
+        
+        self.control_stack.addWidget(self.control_panel)
+        self.control_stack.addWidget(self.normal_panel)
+        
+        control_sidebar_layout.addWidget(self.control_stack)
+        
+        splitter.addWidget(control_container)
         
         # Set splitter sizes (image viewer gets more space)
-        splitter.setSizes([900, 300])
+        splitter.setSizes([880, 320])
         splitter.setCollapsible(0, False)
         splitter.setCollapsible(1, False)
         
@@ -221,10 +279,16 @@ class MainWindow(QMainWindow):
     
     def _connect_signals(self):
         """Connect UI signals."""
+        # Seamless Panel signals
         self.control_panel.parametersChanged.connect(self._on_parameters_changed)
         self.control_panel.livePreviewRequested.connect(self._on_live_preview_requested)
         self.control_panel.processClicked.connect(self._process_texture)
         self.control_panel.exportClicked.connect(self._export_texture)
+        
+        # Normal Panel signals
+        self.normal_panel.livePreviewRequested.connect(self._on_normal_live_update)
+        self.normal_panel.generateClicked.connect(self._generate_normal_map)
+        self.normal_panel.parametersChanged.connect(self._on_normal_param_changed)
     
     def _open_file(self):
         """Open an image file."""
@@ -255,6 +319,7 @@ class MainWindow(QMainWindow):
             self.image_viewer.fit_to_view()
             
             self.control_panel.set_image_loaded(True)
+            self.normal_panel.set_image_loaded(True)
             self.control_panel.set_processed(False)
             
             # Update status
@@ -304,6 +369,99 @@ class MainWindow(QMainWindow):
         """Update the viewer with the background-processed preview."""
         if preview_result is not None:
             self.image_viewer.set_after_image(preview_result)
+
+    def _on_mode_changed(self, id):
+        """Switch between Seamless and Normal modes."""
+        try:
+            is_normal = self.btn_normal.isChecked()
+            self.control_stack.setCurrentIndex(1 if is_normal else 0)
+            
+            # Update viewer tabs and sync state
+            if is_normal:
+                self.image_viewer.tabs.setCurrentIndex(2) # 3D Preview
+                if self.image_np is not None:
+                    self._on_normal_live_update()
+            else:
+                self.image_viewer.tabs.setCurrentIndex(0) # Tiled Preview
+                if self.image_np is not None:
+                    self._on_live_preview_requested()
+        except Exception as e:
+            print(f"Error switching modes: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _on_normal_live_update(self):
+        """Real-time normal map preview (lighting)."""
+        if self.image_np is None:
+            return
+        
+        try:
+            params = self.normal_panel.get_parameters()
+            
+            # Generate raw normals for the preview canvas
+            _, normals_raw = NormalGenerator.process(
+                self.image_np,
+                intensity=params['intensity'],
+                detail_scale=params['detail_scale'],
+                smoothness=params['smoothness'],
+                invert_height=params['invert_height'],
+                format=params['format'],
+                contrast_mode=params['contrast_mode']
+            )
+            
+            self.image_viewer.normal_view.set_normals(normals_raw)
+        except Exception as e:
+            print(f"Error generating normal preview: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _generate_normal_map(self):
+        """Finalize and display the normal map."""
+        if self.image_np is None:
+            QMessageBox.warning(self, "No Image", "Please load an image first.")
+            return
+            
+        params = self.normal_panel.get_parameters()
+        self.status_bar.showMessage("Generating Normal Map...")
+        self.setCursor(Qt.CursorShape.WaitCursor)
+        
+        try:
+            print(f"Generating normal map with params: {params}")
+            print(f"Input image shape: {self.image_np.shape}, dtype: {self.image_np.dtype}")
+            
+            normal_map, normals_raw = NormalGenerator.process(
+                self.image_np,
+                intensity=params['intensity'],
+                detail_scale=params['detail_scale'],
+                smoothness=params['smoothness'],
+                invert_height=params['invert_height'],
+                format=params['format'],
+                contrast_mode=params['contrast_mode']
+            )
+            
+            print(f"Normal map generated: shape={normal_map.shape}, dtype={normal_map.dtype}")
+            print(f"Normals raw: shape={normals_raw.shape}, dtype={normals_raw.dtype}")
+            
+            # Treat the Normal Map as the 'processed' result
+            self.processed_np = normal_map
+            self.image_viewer.set_after_image(normal_map)
+            self.image_viewer.normal_view.set_normals(normals_raw)
+            
+            self.status_bar.showMessage("Normal Map ready", 3000)
+            print("Normal map generation complete!")
+        except Exception as e:
+            error_msg = f"Failed to generate normal map: {str(e)}"
+            print(error_msg)
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "Error", error_msg)
+        finally:
+            self.setCursor(Qt.CursorShape.ArrowCursor)
+
+    def _on_normal_param_changed(self):
+        """Handle preview shape changes etc."""
+        params = self.normal_panel.get_parameters()
+        self.image_viewer.normal_view.set_preview_shape(params['preview_shape'])
     
     def _process_texture(self):
         """Process the texture to make it seamless."""

@@ -9,6 +9,7 @@ from PyQt6.QtCore import Qt, QPoint, QRect, pyqtSignal
 from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QMouseEvent, QWheelEvent, QRegion
 import numpy as np
 import cv2
+from app.core.normal_generator import compute_lighting_jit
 
 
 def numpy_to_qimage(img):
@@ -492,6 +493,176 @@ class TiledCanvas(QWidget):
             self._last_mouse_pos = None
 
 
+class NormalPreviewCanvas(QWidget):
+    """Canvas for real-time lighting preview of normal maps."""
+    
+    zoomChanged = pyqtSignal(float)
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._normals_raw = None # (H, W, 3) float32
+        self._pixmap = None      # Standard RGB Normal Map
+        self._shading_img = None # Result of lighting
+        self._light_dir = np.array([0.5, 0.5, 1.0], dtype=np.float32)
+        self._zoom = 1.0
+        self._pan_offset = QPoint(0, 0)
+        self._last_mouse_pos = None
+        self._dragging = False
+        self._preview_shape = "flat plane"
+        self._sphere_normals = None
+        
+        self.setMouseTracking(True)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.setMinimumSize(200, 200)
+
+    def set_preview_shape(self, shape):
+        """Set preview shape: 'flat plane' or 'sphere'."""
+        self._preview_shape = shape.lower()
+        self._update_lighting()
+        self.update()
+        
+    def set_normals(self, normals_raw, normal_map_pixmap=None):
+        """Set the raw normals and the packed pixmap."""
+        self._normals_raw = normals_raw
+        self._pixmap = normal_map_pixmap
+        self._update_lighting()
+        self.update()
+
+    def _get_sphere_normals(self, h, w):
+        """Generate normals for a sphere."""
+        y, x = np.ogrid[:h, :w]
+        # Normalize to -1, 1
+        ny = (y - h/2.0) / (h/2.0)
+        nx = (x - w/2.0) / (w/2.0)
+        r2 = nx*nx + ny*ny
+        mask = r2 < 0.95 # Slightly smaller than full for anti-aliasing feel
+        nz = np.sqrt(np.clip(1.0 - r2, 0, 1))
+        
+        normals = np.zeros((h, w, 3), dtype=np.float32)
+        normals[..., 0] = nx * mask
+        normals[..., 1] = ny * mask
+        normals[..., 2] = nz * mask + (1.0 - mask) # 1.0 for background (flat)
+        return normals
+        
+    def _update_lighting(self):
+        try:
+            if self._normals_raw is None:
+                self._shading_img = None
+                return
+                
+            h, w = self._normals_raw.shape[:2]
+            
+            # Decide which normals to use
+            if self._preview_shape == "sphere":
+                # Generate sphere normals if needed or resize
+                if self._sphere_normals is None or self._sphere_normals.shape[:2] != (h, w):
+                    self._sphere_normals = self._get_sphere_normals(h, w)
+                
+                # Combine: Add the texture normals to the sphere surface
+                # This is a simplification but works well for artist tools
+                active_normals = self._sphere_normals + self._normals_raw * 0.3
+                # Re-normalize
+                mags = np.sqrt(np.sum(active_normals**2, axis=2))[..., np.newaxis]
+                active_normals /= np.maximum(mags, 1e-6)
+            else:
+                active_normals = self._normals_raw
+
+            # 1. Compute Shading
+            ldir = self._light_dir / np.linalg.norm(self._light_dir)
+            shading = compute_lighting_jit(active_normals, ldir)
+            
+            # 2. Render to QImage
+            base_gray = 180
+            shaded_data = (shading * base_gray).astype(np.uint8)
+            
+            # Convert grayscale shading to QImage
+            self._shading_img = QImage(shaded_data.data, w, h, w, QImage.Format.Format_Grayscale8).copy()
+        except Exception as e:
+            print(f"Error updating lighting: {e}")
+            import traceback
+            traceback.print_exc()
+            self._shading_img = None
+        
+    def fit_to_view(self):
+        if self._normals_raw is not None:
+            h, w = self._normals_raw.shape[:2]
+            w_ratio = self.width() / w
+            h_ratio = self.height() / h
+            self._zoom = min(w_ratio, h_ratio) * 0.95
+            self._pan_offset = QPoint(0, 0)
+            self.zoomChanged.emit(self._zoom)
+            self.update()
+            
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        painter.fillRect(self.rect(), QColor(30, 30, 30))
+        
+        if self._shading_img is None:
+            painter.setPen(QColor(128, 128, 128))
+            painter.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "Generate Normal Map to see preview")
+            return
+            
+        # Draw the shaded image
+        h, w = self._shading_img.height(), self._shading_img.width()
+        sw, sh = int(w * self._zoom), int(h * self._zoom)
+        
+        tx = (self.width() - sw) // 2 + self._pan_offset.x()
+        ty = (self.height() - sh) // 2 + self._pan_offset.y()
+        
+        target_rect = QRect(tx, ty, sw, sh)
+        painter.drawImage(target_rect, self._shading_img)
+        
+        # Draw light indicator (small circle showing light direction)
+        painter.setPen(QColor(255, 255, 0, 150))
+        painter.setBrush(QColor(255, 255, 0, 100))
+        # Project light dir to 2D
+        lx = tx + sw // 2 + int(self._light_dir[0] * sw // 4)
+        ly = ty + sh // 2 - int(self._light_dir[1] * sh // 4)
+        painter.drawEllipse(QPoint(lx, ly), 5, 5)
+        
+        # Title
+        painter.setPen(QColor(255, 255, 255))
+        painter.drawText(self.rect().adjusted(0, 10, 0, 0), Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter, 
+                        "Interactive Lighting Preview (Move mouse to relight)")
+
+    def mouseMoveEvent(self, event: QMouseEvent):
+        pos = event.position().toPoint()
+        
+        # If not dragging, update light direction based on mouse position
+        if not self._dragging:
+            # Calculate light direction relative to center of widget
+            cx, cy = self.width() // 2, self.height() // 2
+            dx = (pos.x() - cx) / (self.width() / 2)
+            dy = -(pos.y() - cy) / (self.height() / 2) # Qt Y is down
+            
+            # Clamp and set Z
+            self._light_dir[0] = np.clip(dx, -1.0, 1.0)
+            self._light_dir[1] = np.clip(dy, -1.0, 1.0)
+            self._light_dir[2] = 0.5 + 0.5 * (1.0 - min(1.0, np.sqrt(dx*dx + dy*dy)))
+            
+            self._update_lighting()
+            self.update()
+        else:
+            # Panning logic
+            if self._last_mouse_pos:
+                delta = pos - self._last_mouse_pos
+                self._pan_offset += delta
+                self._last_mouse_pos = pos
+                self.update()
+
+    def mousePressEvent(self, event: QMouseEvent):
+        if event.button() == Qt.MouseButton.LeftButton:
+            # Shift+Click or similar for panning? No, let's use Right Click for Pan
+            pass
+        elif event.button() == Qt.MouseButton.RightButton:
+            self._dragging = True
+            self._last_mouse_pos = event.position().toPoint()
+            
+    def mouseReleaseEvent(self, event: QMouseEvent):
+        self._dragging = False
+
+
 class ImageViewer(QWidget):
     """Main image viewer with tabs for different view modes."""
     
@@ -501,9 +672,6 @@ class ImageViewer(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        
-        # Tab widget for different views
-        self.tabs = QTabWidget()
         
         # Tab widget for different views
         self.tabs = QTabWidget()
@@ -566,9 +734,14 @@ class ImageViewer(QWidget):
         comp_tile_controls.addWidget(comp_fit_btn)
         comp_layout.addLayout(comp_tile_controls)
         
+        # 3. Normal Map Preview Tab
+        self.normal_view = NormalPreviewCanvas()
+        self.normal_view.zoomChanged.connect(self._update_zoom_label)
+        
         # Add tabs
         self.tabs.addTab(tiled_container, "Tiled Preview")
         self.tabs.addTab(comp_container, "Seam Comparison")
+        self.tabs.addTab(self.normal_view, "3D Preview")
         
         layout.addWidget(self.tabs)
         
