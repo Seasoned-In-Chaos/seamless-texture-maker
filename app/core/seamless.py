@@ -142,6 +142,7 @@ class SeamlessProcessor:
             'blend_strength': round(self.blend_strength, 3),
             'seam_smoothness': round(self.seam_smoothness, 3),
             'detail_preservation': round(self.detail_preservation, 3),
+            'symmetric_blending': int(self.symmetric_blending),
             'overlap_x': round(self.overlap_x, 3),
             'overlap_y': round(self.overlap_y, 3),
             'edge_falloff': round(self.edge_falloff, 3),
@@ -171,8 +172,8 @@ class SeamlessProcessor:
         result = synthesis_splat(
             img,
             new_size=(h, w),
-            grid_size=int(8 * self.splat_scale), # Rough heuristic
-            scale=1.0, # Relative scale is tricky, keeping 1.0
+            grid_size=8, # Fixed grid for consistent density
+            scale=self.splat_scale, # Correctly pass scale
             rotation=self.splat_rotation,
             rand_rot=self.splat_random_rotation,
             wobble=self.splat_wobble,
@@ -194,26 +195,40 @@ class SeamlessProcessor:
         seam_width = int(base_seam_width * (0.5 + self.blend_strength * 0.5))
         
         # Step 3: Apply smart inpainting to remove seams
+        # Optimization: Simplified inpaint for preview
+        is_preview = (img.shape[0] < 512) # Heuristic for preview mode
+        
         inpainted = smart_seam_inpaint(
             offset,
             seam_width=seam_width,
-            detail_preservation=self.detail_preservation,
+            detail_preservation=self.detail_preservation if not is_preview else 0.0,
             method='telea'
         )
         
-        # Step 4: Apply edge blending for smooth transitions (JIT-optimized)
-        if self.use_jit:
+        # Step 4: Apply edge blending for smooth transitions
+        # JIT is ONLY for symmetric blending. For Soft Falloff (non-symmetric), use Gaussian.
+        if self.use_jit and self.symmetric_blending:
             blended = blend_seams_fast(
                 inpainted,
                 blend_strength=self.blend_strength,
                 smoothness=self.seam_smoothness
             )
-        else:
+        elif self.symmetric_blending:
+            # Fallback legacy symmetric
             blended = blend_seams(
                 inpainted,
                 blend_strength=self.blend_strength,
                 smoothness=self.seam_smoothness,
-                symmetric=self.symmetric_blending
+                symmetric=True
+            )
+        else:
+            # Soft Falloff (Non-Symmetric) - Use Gaussian Blur method
+            # This restores the "Soft" effect user asked for
+            blended = blend_seams(
+                inpainted,
+                blend_strength=self.blend_strength,
+                smoothness=self.seam_smoothness,
+                symmetric=False
             )
         
         # Step 5: Reverse the offset to restore original positioning

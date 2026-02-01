@@ -194,14 +194,11 @@ class MainWindow(QMainWindow):
         """Set up status bar."""
         self.status_bar = self.statusBar()
         
-        # GPU status
-        gpu_status = "GPU: CUDA" if is_cuda_available() else "GPU: CPU Mode"
-        self.gpu_label = QLabel(gpu_status)
-        self.status_bar.addPermanentWidget(self.gpu_label)
-        
         # File info
         self.file_label = QLabel("No file loaded")
         self.status_bar.addWidget(self.file_label)
+        
+        self.status_bar.addPermanentWidget(QLabel("Made by Shubham Panchasara | © 2026"), 1)
         
         # Processing indicator
         self.progress = QProgressBar()
@@ -270,6 +267,10 @@ class MainWindow(QMainWindow):
             self.settings['last_directory'] = os.path.dirname(file_path)
             
             self.setWindowTitle(f"{APP_NAME} - {os.path.basename(file_path)}")
+            
+            # Automatically process texture on load so canvas isn't blank
+            # (Deferred slightly to allow UI to update first)
+            QTimer.singleShot(100, self._process_texture)
             
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load image:\n{str(e)}")
@@ -415,6 +416,8 @@ class MainWindow(QMainWindow):
             f"<h3>{APP_NAME}</h3>"
             f"<p>Version {APP_VERSION}</p>"
             f"<p>Create perfectly seamless textures for 3D workflows.</p>"
+            f"<p><b>Created by Shubham Panchasara</b></p>"
+            f"<p><a href='https://www.instagram.com/panchasarashubham/'>Instagram: @panchasarashubham</a></p>"
             f"<p>Supports: 3ds Max, Corona, V-Ray, Unreal, Blender</p>"
             f"<hr>"
             f"<p>GPU: {'CUDA Available' if is_cuda_available() else 'CPU Mode'}</p>"
