@@ -127,12 +127,24 @@ class ControlPanel(QWidget):
         self.blend_slider.sliderMoved.connect(self._on_live_update)
         standard_layout.addWidget(self.blend_slider)
         
-        # Removed separate smoothness/falloff slider as requested (consolidated)
+        # Manual Smoothness/Blur Control (Restored)
+        self.smoothness_slider = LabeledSlider("Smoothness / Blur", 0, 100, 50)
+        self.smoothness_slider.valueChanged.connect(self._on_param_changed)
+        self.smoothness_slider.sliderMoved.connect(self._on_live_update)
+        standard_layout.addWidget(self.smoothness_slider)
         
         self.detail_slider = LabeledSlider("Detail Preservation", 0, 100, 75)
         self.detail_slider.valueChanged.connect(self._on_param_changed)
         self.detail_slider.sliderMoved.connect(self._on_live_update)
         standard_layout.addWidget(self.detail_slider)
+        
+        # Symmetric Blending Toggle
+        from PyQt6.QtWidgets import QCheckBox
+        self.symmetric_check = QCheckBox("Symmetric Blending (Mirror)")
+        self.symmetric_check.setChecked(True)
+        self.symmetric_check.toggled.connect(self._on_param_changed)
+        self.symmetric_check.setToolTip("Uncheck for natural soft falloff (slower)")
+        standard_layout.addWidget(self.symmetric_check)
         
         self.params_stack.addWidget(self.standard_page)
         
@@ -284,9 +296,10 @@ class ControlPanel(QWidget):
             
             # Standard params (Processor expects 0.0-1.0)
             'blend_strength': self.blend_slider.value() / 100.0,
-            # Dynamic smoothness: narrow blends are sharper, wide blends are softer
-            'seam_smoothness': 0.1 + (self.blend_slider.value() / 100.0) * 0.8,
+            # Manual smoothness for Blur control
+            'seam_smoothness': self.smoothness_slider.value() / 100.0,
             'detail_preservation': self.detail_slider.value() / 100.0,
+            'symmetric_blending': self.symmetric_check.isChecked(),
             
             # Overlap params
             'overlap_x': self.overlap_x_slider.value() / 100.0, # 0-50 -> 0.0-0.5

@@ -7,7 +7,7 @@ import json
 
 # Application info
 APP_NAME = "Seamless Texture Maker"
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.0"
 APP_AUTHOR = "Studio Tools"
 
 # Default settings

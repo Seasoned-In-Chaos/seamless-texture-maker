@@ -1,12 +1,12 @@
 """
-Image viewer widget with before/after split view and tiled preview.
+Image viewer widget with edge-focused comparison and tiled preview.
 """
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea,
     QSizePolicy, QTabWidget, QPushButton, QSlider
 )
 from PyQt6.QtCore import Qt, QPoint, QRect, pyqtSignal
-from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QMouseEvent, QWheelEvent
+from PyQt6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QMouseEvent, QWheelEvent, QRegion
 import numpy as np
 import cv2
 
@@ -129,18 +129,22 @@ class ImageCanvas(QWidget):
 
 
 class SplitViewCanvas(QWidget):
-    """Canvas for before/after split view comparison."""
+    """Canvas for edge-focused comparison view (formerly split view)."""
+    
+    zoomChanged = pyqtSignal(float)
     
     def __init__(self, parent=None):
         super().__init__(parent)
         self._before_pixmap = None
         self._after_pixmap = None
-        self._split_position = 0.5  # 0.0 to 1.0
+        self._blend_factor = 0.5  # 0.0 (Original) to 1.0 (Processed)
         self._zoom = 1.0
         self._pan_offset = QPoint(0, 0)
         self._last_mouse_pos = None
-        self._dragging_split = False
+        self._dragging_blend = False
         self._dragging_pan = False
+        self._show_guides = True
+        self._seam_width_pct = 0.10  # 10% coverage
         
         self.setMouseTracking(True)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -174,7 +178,13 @@ class SplitViewCanvas(QWidget):
             h_ratio = self.height() / pixmap.height()
             self._zoom = min(w_ratio, h_ratio) * 0.95
             self._pan_offset = QPoint(0, 0)
+            self.zoomChanged.emit(self._zoom)
             self.update()
+            
+    def set_show_guides(self, show):
+        """Toggle seam guides."""
+        self._show_guides = show
+        self.update()
     
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -205,68 +215,128 @@ class SplitViewCanvas(QWidget):
         
         target_rect = QRect(x, y, scaled_w, scaled_h)
         
-        # Calculate split position in widget coordinates
-        split_x = x + int(scaled_w * self._split_position)
+        # --- Edge-Focused Comparison Logic ---
         
-        # Draw before image (left side)
-        if self._before_pixmap:
-            painter.setClipRect(QRect(x, y, int(scaled_w * self._split_position), scaled_h))
-            # Draw Before (always full res)
-            painter.drawPixmap(target_rect, self._before_pixmap)
+        # 1. Define Seam Regions (Borders + Center Cross)
+        pad = int(min(scaled_w, scaled_h) * self._seam_width_pct / 2)
+        pad = max(4, pad) 
         
-        # Draw after image (right side)
+        cx = x + scaled_w // 2
+        cy = y + scaled_h // 2
+        
+        # Create regions for Seams using QRegion union
+        seam_region = QRegion()
+        
+        # Borders (Outer seam bands)
+        seam_region += QRect(x, y, scaled_w, pad) # Top
+        seam_region += QRect(x, y + scaled_h - pad, scaled_w, pad) # Bottom
+        seam_region += QRect(x, y, pad, scaled_h) # Left
+        seam_region += QRect(x + scaled_w - pad, y, pad, scaled_h) # Right
+        
+        # Center Cross (Offset Intersection)
+        seam_region += QRect(x, cy - pad, scaled_w, pad*2) # Horizontal Center
+        seam_region += QRect(cx - pad, y, pad*2, scaled_h) # Vertical Center
+        
+        # 2. Draw Processed Image (Background) everywhere
         if self._after_pixmap:
-             # Calculate clip rect for right side
-             clip_w = scaled_w - int(scaled_w * self._split_position)
-             if clip_w > 0:
-                 painter.setClipRect(QRect(split_x, y, clip_w, scaled_h))
-                 # Draw After (possibly low res/preview) scaled to target_rect
-                 painter.drawPixmap(target_rect, self._after_pixmap)
+            painter.drawPixmap(target_rect, self._after_pixmap)
+            
+        # 3. Dim the Non-Seam Areas
+        # Calculate the non-seam region by subtracting seam_region from image rect
+        full_image_region = QRegion(target_rect)
+        dim_region = full_image_region - seam_region
         
+        painter.setClipRegion(dim_region)
+        painter.fillRect(target_rect, QColor(0, 0, 0, 180)) # Dimmed overlay
         painter.setClipping(False)
         
-        # Draw split line
-        pen = QPen(QColor(0, 152, 255), 2)
-        painter.setPen(pen)
-        painter.drawLine(split_x, y, split_x, y + scaled_h)
+        # 4. Draw Original Image (Mixed in Seam Regions)
+        if self._before_pixmap:
+            # Opacity based on blend factor. 
+            # t=0 (Original) -> 100% Original
+            # t=1 (Processed) -> 0% Original (showing Processed underneath)
+            opacity = 1.0 - self._blend_factor
+            
+            # Only draw/clip if we have some opacity
+            if opacity > 0.01:
+                painter.setClipRegion(seam_region)
+                painter.setOpacity(opacity)
+                painter.drawPixmap(target_rect, self._before_pixmap)
+                painter.setOpacity(1.0)
+                painter.setClipping(False)
         
-        # Draw split handle
-        handle_y = y + scaled_h // 2
-        painter.setBrush(QColor(0, 152, 255))
-        painter.drawEllipse(QPoint(split_x, handle_y), 8, 8)
+        # 5. Draw Visual Guides
+        if self._show_guides:
+            pen = QPen(QColor(0, 152, 255, 128), 1, Qt.PenStyle.DashLine)
+            painter.setPen(pen)
+            
+            # Draw outlines of the seam bands
+            # Inner border lines
+            painter.drawLine(x + pad, y + pad, x + scaled_w - pad, y + pad) 
+            painter.drawLine(x + pad, y + scaled_h - pad, x + scaled_w - pad, y + scaled_h - pad) 
+            painter.drawLine(x + pad, y + pad, x + pad, y + scaled_h - pad) 
+            painter.drawLine(x + scaled_w - pad, y + pad, x + scaled_w - pad, y + scaled_h - pad)
+            
+            # Center cross lines
+            painter.drawLine(x, cy - pad, x + scaled_w, cy - pad)
+            painter.drawLine(x, cy + pad, x + scaled_w, cy + pad)
+            painter.drawLine(cx - pad, y, cx - pad, y + scaled_h)
+            painter.drawLine(cx + pad, y, cx + pad, y + scaled_h)
+
+        # 6. Draw Blend Slider UI
+        slider_h = 6
+        slider_y = self.height() - 30
+        slider_margin_x = 40
+        slider_rect = QRect(slider_margin_x, slider_y, self.width() - slider_margin_x*2, slider_h)
         
-        # Draw labels
+        # Background track
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(60, 60, 60))
+        painter.drawRoundedRect(slider_rect, slider_h//2, slider_h//2)
+        
+        # Active track (blue)
+        handle_x = int(slider_rect.left() + (slider_rect.width() * self._blend_factor))
+        if handle_x > slider_rect.left():
+            active_rect = QRect(slider_rect.left(), slider_y, handle_x - slider_rect.left(), slider_h)
+            painter.setBrush(QColor(0, 152, 255))
+            painter.drawRoundedRect(active_rect, slider_h//2, slider_h//2)
+        
+        # Handle
+        painter.setBrush(QColor(255, 255, 255))
+        painter.drawEllipse(QPoint(handle_x, slider_y + slider_h//2), 8, 8)
+        
+        # Labels
+        painter.setPen(QColor(200, 200, 200))
+        painter.setFont(painter.font())
+        label_y = slider_y - 12
+        painter.drawText(slider_rect.left(), label_y, "Original Edges")
+        
+        # Right align 'Processed Edges'
+        fm = painter.fontMetrics()
+        proc_text = "Processed Edges"
+        proc_w = fm.horizontalAdvance(proc_text)
+        painter.drawText(slider_rect.right() - proc_w, label_y, proc_text)
+        
+        # Title
         painter.setPen(QColor(255, 255, 255))
         font = painter.font()
         font.setBold(True)
         painter.setFont(font)
-        
-        if self._before_pixmap:
-            painter.drawText(x + 10, y + 25, "BEFORE")
-        if self._after_pixmap:
-            painter.drawText(split_x + 10, y + 25, "AFTER")
+        painter.drawText(self.rect().adjusted(0, 20, 0, 0), Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter, 
+                        "Edge Seam Visualization")
     
-    def _get_split_handle_rect(self):
-        """Get the clickable area around the split line."""
-        pixmap = self._before_pixmap or self._after_pixmap
-        if pixmap is None:
-            return QRect()
-        
-        scaled_w = int(pixmap.width() * self._zoom)
-        scaled_h = int(pixmap.height() * self._zoom)
-        x = (self.width() - scaled_w) // 2 + self._pan_offset.x()
-        y = (self.height() - scaled_h) // 2 + self._pan_offset.y()
-        split_x = x + int(scaled_w * self._split_position)
-        
-        return QRect(split_x - 10, y, 20, scaled_h)
+    def _get_slider_rect(self):
+        """Get the slider interaction area."""
+        slider_y = self.height() - 50
+        return QRect(0, slider_y, self.width(), 50)
     
     def mousePressEvent(self, event: QMouseEvent):
         pos = event.position().toPoint()
         
         if event.button() == Qt.MouseButton.LeftButton:
-            handle_rect = self._get_split_handle_rect()
-            if handle_rect.contains(pos):
-                self._dragging_split = True
+            if self._get_slider_rect().contains(pos):
+                self._dragging_blend = True
+                self._update_blend_from_pos(pos)
             else:
                 self._dragging_pan = True
                 self._last_mouse_pos = pos
@@ -274,33 +344,32 @@ class SplitViewCanvas(QWidget):
     def mouseMoveEvent(self, event: QMouseEvent):
         pos = event.position().toPoint()
         
-        if self._dragging_split:
-            pixmap = self._before_pixmap or self._after_pixmap
-            if pixmap:
-                scaled_w = int(pixmap.width() * self._zoom)
-                x = (self.width() - scaled_w) // 2 + self._pan_offset.x()
-                
-                # Calculate new split position
-                relative_x = pos.x() - x
-                self._split_position = max(0.0, min(1.0, relative_x / scaled_w))
-                self.update()
+        if self._dragging_blend:
+            self._update_blend_from_pos(pos)
         
         elif self._dragging_pan and self._last_mouse_pos:
             delta = pos - self._last_mouse_pos
             self._pan_offset += delta
             self._last_mouse_pos = pos
             self.update()
-        
-        # Update cursor
-        handle_rect = self._get_split_handle_rect()
-        if handle_rect.contains(pos):
+            
+        if self._get_slider_rect().contains(pos):
             self.setCursor(Qt.CursorShape.SizeHorCursor)
         else:
             self.setCursor(Qt.CursorShape.ArrowCursor)
+
+    def _update_blend_from_pos(self, pos):
+        """Update blend factor from mouse position."""
+        slider_margin_x = 40
+        slider_rect = QRect(slider_margin_x, 0, self.width() - slider_margin_x*2, 0)
+        relative_x = pos.x() - slider_rect.left()
+        if slider_rect.width() > 0:
+            self._blend_factor = max(0.0, min(1.0, relative_x / slider_rect.width()))
+            self.update()
     
     def mouseReleaseEvent(self, event: QMouseEvent):
         if event.button() == Qt.MouseButton.LeftButton:
-            self._dragging_split = False
+            self._dragging_blend = False
             self._dragging_pan = False
             self._last_mouse_pos = None
     
@@ -312,11 +381,14 @@ class SplitViewCanvas(QWidget):
             new_zoom = self._zoom * zoom_factor
             new_zoom = max(0.1, min(10.0, new_zoom))
             self._zoom = new_zoom
+            self.zoomChanged.emit(self._zoom)
             self.update()
 
 
 class TiledCanvas(QWidget):
     """Canvas for displaying tiled preview to verify seamlessness."""
+    
+    zoomChanged = pyqtSignal(float)
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -327,10 +399,16 @@ class TiledCanvas(QWidget):
         self._last_mouse_pos = None
         self._dragging = False
         self._logical_size = None
+        self._show_guides = True
         
         self.setMouseTracking(True)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setMinimumSize(200, 200)
+    
+    def set_show_guides(self, show):
+        """Toggle grid lines."""
+        self._show_guides = show
+        self.update()
     
     def set_image(self, image, logical_size=None):
         """Set image from numpy array with optional logical size."""
@@ -357,6 +435,7 @@ class TiledCanvas(QWidget):
             h_ratio = self.height() / total_h
             self._zoom = min(w_ratio, h_ratio) * 0.95
             self._pan_offset = QPoint(0, 0)
+            self.zoomChanged.emit(self._zoom)
             self.update()
     
     def paintEvent(self, event):
@@ -395,17 +474,18 @@ class TiledCanvas(QWidget):
                 target_rect = QRect(x, y, tile_w, tile_h)
                 painter.drawPixmap(target_rect, self._pixmap)
         
-        # Draw grid lines to show tile boundaries
-        pen = QPen(QColor(0, 152, 255, 100), 1, Qt.PenStyle.DashLine)
-        painter.setPen(pen)
-        
-        for tx in range(1, self._tiles):
-            x = start_x + tx * tile_w
-            painter.drawLine(x, start_y, x, start_y + total_h)
-        
-        for ty in range(1, self._tiles):
-            y = start_y + ty * tile_h
-            painter.drawLine(start_x, y, start_x + total_w, y)
+        # Draw grid lines to show tile boundaries (only if guides enabled)
+        if self._show_guides:
+            pen = QPen(QColor(0, 152, 255, 100), 1, Qt.PenStyle.DashLine)
+            painter.setPen(pen)
+            
+            for tx in range(1, self._tiles):
+                x = start_x + tx * tile_w
+                painter.drawLine(x, start_y, x, start_y + total_h)
+            
+            for ty in range(1, self._tiles):
+                y = start_y + ty * tile_h
+                painter.drawLine(start_x, y, start_x + total_w, y)
     
     def wheelEvent(self, event: QWheelEvent):
         if self._pixmap:
@@ -414,6 +494,7 @@ class TiledCanvas(QWidget):
             new_zoom = self._zoom * zoom_factor
             new_zoom = max(0.05, min(5.0, new_zoom))
             self._zoom = new_zoom
+            self.zoomChanged.emit(self._zoom)
             self.update()
     
     def mousePressEvent(self, event: QMouseEvent):
@@ -448,9 +529,9 @@ class ImageViewer(QWidget):
         # Tab widget for different views
         self.tabs = QTabWidget()
         
-        # Split view tab
+        # Initialize views
         self.split_view = SplitViewCanvas()
-        self.tabs.addTab(self.split_view, "Before / After")
+        self.split_view.zoomChanged.connect(self._update_zoom_label)
         
         # Tiled preview tab
         tiled_container = QWidget()
@@ -458,6 +539,7 @@ class ImageViewer(QWidget):
         tiled_layout.setContentsMargins(0, 0, 0, 0)
         
         self.tiled_view = TiledCanvas()
+        self.tiled_view.zoomChanged.connect(self._update_zoom_label)
         tiled_layout.addWidget(self.tiled_view)
         
         # Tile count slider
@@ -482,7 +564,10 @@ class ImageViewer(QWidget):
         tile_controls.addWidget(fit_btn)
         
         tiled_layout.addLayout(tile_controls)
+        
+        # Add tabs in requested order (Tiled FIRST, then Comparison)
         self.tabs.addTab(tiled_container, "Tiled Preview")
+        self.tabs.addTab(self.split_view, "Seam Comparison")
         
         layout.addWidget(self.tabs)
         
@@ -495,6 +580,14 @@ class ImageViewer(QWidget):
         self.fit_btn.clicked.connect(self._fit_current_view)
         toolbar.addWidget(self.fit_btn)
         
+        # Toggle Guide Button
+        self.guide_btn = QPushButton("Guides")
+        self.guide_btn.setCheckable(True)
+        self.guide_btn.setChecked(True)
+        self.guide_btn.setMaximumWidth(80)
+        self.guide_btn.clicked.connect(self._on_guide_toggled)
+        toolbar.addWidget(self.guide_btn)
+        
         toolbar.addStretch()
         
         self.zoom_label = QLabel("100%")
@@ -502,16 +595,35 @@ class ImageViewer(QWidget):
         toolbar.addWidget(self.zoom_label)
         
         layout.addLayout(toolbar)
+        
+        # Connect tab signal LAST to prevent startup crashes when label doesn't exist
+        self.tabs.currentChanged.connect(self._on_tab_changed)
     
+    def _update_zoom_label(self, zoom):
+        """Update the zoom percentage label."""
+        self.zoom_label.setText(f"{int(zoom * 100)}%")
+        
+    def _on_tab_changed(self, index):
+        """Update zoom label when switching tabs."""
+        if index == 0:
+            self._update_zoom_label(self.tiled_view._zoom)
+        else:
+            self._update_zoom_label(self.split_view._zoom)
+
     def _on_tile_count_changed(self, value):
         self.tiled_view.set_tiles(value)
         self.tile_count_label.setText(f"{value}x{value}")
     
+    def _on_guide_toggled(self, checked):
+        self.split_view.set_show_guides(checked)
+        self.tiled_view.set_show_guides(checked)
+    
     def _fit_current_view(self):
+        # Index 0 is now Tiled Preview
         if self.tabs.currentIndex() == 0:
-            self.split_view.fit_to_view()
-        else:
             self.tiled_view.fit_to_view()
+        else:
+            self.split_view.fit_to_view()
     
     def set_before_image(self, image):
         """Set the original image."""

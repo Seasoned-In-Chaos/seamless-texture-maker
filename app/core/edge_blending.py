@@ -114,6 +114,63 @@ def blend_seams(image, blend_strength=0.5, smoothness=0.5, symmetric=True):
     if blend_width < 2:
         return image.copy()
     
+    
+    if not symmetric:
+        # Soft Falloff (Gaussian Blur Method)
+        # This blurs the seam area to create a smooth transition without mirroring
+        
+        # Create mask for the blend region
+        mask = np.zeros(image.shape[:2], dtype=np.float32)
+        
+        # Horizontal seam (Vertical strip at center)
+        cx = w // 2
+        half_blend = blend_width // 2
+        x1 = max(0, cx - half_blend)
+        x2 = min(w, cx + half_blend)
+        
+        # Create gradient for mask
+        if half_blend > 0:
+             x_coords = np.arange(x1, x2)
+             dist = np.abs(x_coords - cx) / half_blend # 0 at center, 1 at edge
+             # Invert: 1 at center, 0 at edge
+             mask_vals = 1.0 - dist
+             # Smooth it
+             mask_vals = mask_vals * mask_vals * (3.0 - 2.0 * mask_vals)
+             mask[:, x1:x2] = np.maximum(mask[:, x1:x2], mask_vals[np.newaxis, :])
+        
+        # Vertical seam (Horizontal strip at center)
+        cy = h // 2
+        y1 = max(0, cy - half_blend)
+        y2 = min(h, cy + half_blend)
+        
+        if half_blend > 0:
+             y_coords = np.arange(y1, y2)
+             dist = np.abs(y_coords - cy) / half_blend
+             mask_vals = 1.0 - dist
+             mask_vals = mask_vals * mask_vals * (3.0 - 2.0 * mask_vals)
+             mask[y1:y2, :] = np.maximum(mask[y1:y2, :], mask_vals[:, np.newaxis])
+             
+        # Apply blur
+        # Blur radius controlled by smoothness param
+        # smoothness 0.0 -> small radius (3)
+        # smoothness 1.0 -> large radius (proportional to blend width)
+        
+        base_radius = max(3, blend_width // 2)
+        scaled_radius = int(3 + (base_radius - 3) * smoothness)
+        blur_radius = scaled_radius | 1 # Must be odd
+        
+        if blur_radius < 3: blur_radius = 3
+            
+        blurred = cv2.GaussianBlur(image, (blur_radius, blur_radius), 0)
+        
+        # Blend original and blurred using mask
+        if len(image.shape) == 3:
+            mask = mask[:, :, np.newaxis]
+            
+        result = image.astype(np.float32) * (1 - mask) + blurred.astype(np.float32) * mask
+        return result.astype(image.dtype)
+        
+    # Standard Symmetric (Mirror) Blending
     # VECTORIZED IMPROVED: Use distance-based gradient blending without Python loops
     # This preserves edge details while creating smooth transitions
     
@@ -147,6 +204,7 @@ def blend_seams(image, blend_strength=0.5, smoothness=0.5, symmetric=True):
         offsets = np.arange(1, half_blend + 1)
         t_values = offsets / half_blend
         
+        # Apply smoothstep interpolation vectorized
         if smoothness > 0.01:
             t_values = t_values * t_values * (3.0 - 2.0 * t_values)
             gamma = 1.0 / (smoothness * 2.0)
