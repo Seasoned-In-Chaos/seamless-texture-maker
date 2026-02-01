@@ -145,6 +145,7 @@ class SplitViewCanvas(QWidget):
         self._dragging_pan = False
         self._show_guides = True
         self._seam_width_pct = 0.10  # 10% coverage
+        self._tiles = 2
         
         self.setMouseTracking(True)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -174,12 +175,19 @@ class SplitViewCanvas(QWidget):
         """Fit image to view."""
         pixmap = self._before_pixmap or self._after_pixmap
         if pixmap:
-            w_ratio = self.width() / pixmap.width()
-            h_ratio = self.height() / pixmap.height()
+            total_w = pixmap.width() * self._tiles
+            total_h = pixmap.height() * self._tiles
+            w_ratio = self.width() / total_w
+            h_ratio = self.height() / total_h
             self._zoom = min(w_ratio, h_ratio) * 0.95
             self._pan_offset = QPoint(0, 0)
             self.zoomChanged.emit(self._zoom)
             self.update()
+            
+    def set_tiles(self, count):
+        """Set number of tiles."""
+        self._tiles = max(1, min(6, count))
+        self.update()
             
     def set_show_guides(self, show):
         """Toggle seam guides."""
@@ -205,39 +213,31 @@ class SplitViewCanvas(QWidget):
         logical_w = ref_pixmap.width()
         logical_h = ref_pixmap.height()
         
-        # Calculate scaled size based on Logical Size
-        scaled_w = int(logical_w * self._zoom)
-        scaled_h = int(logical_h * self._zoom)
+        # 1. Calculate tile size
+        # Logical size is original image size
+        tile_w = int(logical_w * self._zoom)
+        tile_h = int(logical_h * self._zoom)
+        scaled_w = tile_w * self._tiles
+        scaled_h = tile_h * self._tiles
         
-        # Center position with pan offset
-        x = (self.width() - scaled_w) // 2 + self._pan_offset.x()
-        y = (self.height() - scaled_h) // 2 + self._pan_offset.y()
+        # Center the grid
+        start_x = (self.width() - scaled_w) // 2 + self._pan_offset.x()
+        start_y = (self.height() - scaled_h) // 2 + self._pan_offset.y()
         
-        target_rect = QRect(x, y, scaled_w, scaled_h)
-        
-        # 1. Calculate tile size (2x2)
-        # We draw a 2x2 grid to show the seams properly
-        tile_w = scaled_w // 2
-        tile_h = scaled_h // 2
-        
-        # Center the 2x2 grid
-        start_x = x
-        start_y = y
-        
-        # 2. Draw Processed Image (Full 2x2)
+        # 2. Draw Processed Image (Background Grid)
         if self._after_pixmap:
-            for ty in range(2):
-                for tx in range(2):
+            for ty in range(self._tiles):
+                for tx in range(self._tiles):
                     tile_rect = QRect(start_x + tx * tile_w, start_y + ty * tile_h, tile_w, tile_h)
                     painter.drawPixmap(tile_rect, self._after_pixmap)
             
-        # 3. Draw Original Image (Full 2x2) with opacity
+        # 3. Draw Original Image (Mixed Grid) with opacity
         if self._before_pixmap:
             opacity = 1.0 - self._blend_factor
             if opacity > 0.01:
                 painter.setOpacity(opacity)
-                for ty in range(2):
-                    for tx in range(2):
+                for ty in range(self._tiles):
+                    for tx in range(self._tiles):
                         tile_rect = QRect(start_x + tx * tile_w, start_y + ty * tile_h, tile_w, tile_h)
                         painter.drawPixmap(tile_rect, self._before_pixmap)
                 painter.setOpacity(1.0)
@@ -247,13 +247,16 @@ class SplitViewCanvas(QWidget):
             pen = QPen(QColor(0, 152, 255, 80), 1, Qt.PenStyle.DashLine)
             painter.setPen(pen)
             
-            # Draw center cross for 2x2
-            cx = start_x + tile_w
-            cy = start_y + tile_h
-            painter.drawLine(cx, start_y, cx, start_y + scaled_h)
-            painter.drawLine(start_x, cy, start_x + scaled_w, cy)
+            # Draw internal grid lines for any tile count
+            for tx in range(1, self._tiles):
+                lx = start_x + tx * tile_w
+                painter.drawLine(lx, start_y, lx, start_y + scaled_h)
             
-            # Draw outer borders
+            for ty in range(1, self._tiles):
+                ly = start_y + ty * tile_h
+                painter.drawLine(start_x, ly, start_x + scaled_w, ly)
+            
+            # Draw outer border
             painter.drawRect(start_x, start_y, scaled_w, scaled_h)
 
         # 5. Draw Blend Slider UI
@@ -502,11 +505,10 @@ class ImageViewer(QWidget):
         # Tab widget for different views
         self.tabs = QTabWidget()
         
-        # Initialize views
-        self.split_view = SplitViewCanvas()
-        self.split_view.zoomChanged.connect(self._update_zoom_label)
+        # Tab widget for different views
+        self.tabs = QTabWidget()
         
-        # Tiled preview tab
+        # 1. Tiled Preview Tab
         tiled_container = QWidget()
         tiled_layout = QVBoxLayout(tiled_container)
         tiled_layout.setContentsMargins(0, 0, 0, 0)
@@ -515,7 +517,6 @@ class ImageViewer(QWidget):
         self.tiled_view.zoomChanged.connect(self._update_zoom_label)
         tiled_layout.addWidget(self.tiled_view)
         
-        # Tile count slider
         tile_controls = QHBoxLayout()
         tile_controls.setContentsMargins(8, 4, 8, 4)
         tile_controls.addWidget(QLabel("Tiles:"))
@@ -530,17 +531,44 @@ class ImageViewer(QWidget):
         tile_controls.addWidget(self.tile_count_label)
         tile_controls.addStretch()
         
-        # Fit button for tiled view
         fit_btn = QPushButton("Fit")
         fit_btn.setMaximumWidth(60)
         fit_btn.clicked.connect(self.tiled_view.fit_to_view)
         tile_controls.addWidget(fit_btn)
-        
         tiled_layout.addLayout(tile_controls)
         
-        # Add tabs in requested order (Tiled FIRST, then Comparison)
+        # 2. Seam Comparison Tab
+        comp_container = QWidget()
+        comp_layout = QVBoxLayout(comp_container)
+        comp_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.split_view = SplitViewCanvas()
+        self.split_view.zoomChanged.connect(self._update_zoom_label)
+        comp_layout.addWidget(self.split_view)
+        
+        comp_tile_controls = QHBoxLayout()
+        comp_tile_controls.setContentsMargins(8, 4, 8, 4)
+        comp_tile_controls.addWidget(QLabel("Tiles:"))
+        self.comp_tile_slider = QSlider(Qt.Orientation.Horizontal)
+        self.comp_tile_slider.setMinimum(1)
+        self.comp_tile_slider.setMaximum(6)
+        self.comp_tile_slider.setValue(2)
+        self.comp_tile_slider.setMaximumWidth(150)
+        self.comp_tile_slider.valueChanged.connect(self._on_comp_tile_count_changed)
+        comp_tile_controls.addWidget(self.comp_tile_slider)
+        self.comp_tile_count_label = QLabel("2x2")
+        comp_tile_controls.addWidget(self.comp_tile_count_label)
+        comp_tile_controls.addStretch()
+        
+        comp_fit_btn = QPushButton("Fit")
+        comp_fit_btn.setMaximumWidth(60)
+        comp_fit_btn.clicked.connect(self.split_view.fit_to_view)
+        comp_tile_controls.addWidget(comp_fit_btn)
+        comp_layout.addLayout(comp_tile_controls)
+        
+        # Add tabs
         self.tabs.addTab(tiled_container, "Tiled Preview")
-        self.tabs.addTab(self.split_view, "Seam Comparison")
+        self.tabs.addTab(comp_container, "Seam Comparison")
         
         layout.addWidget(self.tabs)
         
@@ -586,6 +614,10 @@ class ImageViewer(QWidget):
     def _on_tile_count_changed(self, value):
         self.tiled_view.set_tiles(value)
         self.tile_count_label.setText(f"{value}x{value}")
+
+    def _on_comp_tile_count_changed(self, value):
+        self.split_view.set_tiles(value)
+        self.comp_tile_count_label.setText(f"{value}x{value}")
     
     def _on_guide_toggled(self, checked):
         self.split_view.set_show_guides(checked)
