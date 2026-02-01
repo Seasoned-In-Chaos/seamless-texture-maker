@@ -215,75 +215,48 @@ class SplitViewCanvas(QWidget):
         
         target_rect = QRect(x, y, scaled_w, scaled_h)
         
-        # --- Edge-Focused Comparison Logic ---
+        # 1. Calculate tile size (2x2)
+        # We draw a 2x2 grid to show the seams properly
+        tile_w = scaled_w // 2
+        tile_h = scaled_h // 2
         
-        # 1. Define Seam Regions (Borders + Center Cross)
-        pad = int(min(scaled_w, scaled_h) * self._seam_width_pct / 2)
-        pad = max(4, pad) 
+        # Center the 2x2 grid
+        start_x = x
+        start_y = y
         
-        cx = x + scaled_w // 2
-        cy = y + scaled_h // 2
-        
-        # Create regions for Seams using QRegion union
-        seam_region = QRegion()
-        
-        # Borders (Outer seam bands)
-        seam_region += QRect(x, y, scaled_w, pad) # Top
-        seam_region += QRect(x, y + scaled_h - pad, scaled_w, pad) # Bottom
-        seam_region += QRect(x, y, pad, scaled_h) # Left
-        seam_region += QRect(x + scaled_w - pad, y, pad, scaled_h) # Right
-        
-        # Center Cross (Offset Intersection)
-        seam_region += QRect(x, cy - pad, scaled_w, pad*2) # Horizontal Center
-        seam_region += QRect(cx - pad, y, pad*2, scaled_h) # Vertical Center
-        
-        # 2. Draw Processed Image (Background) everywhere
+        # 2. Draw Processed Image (Full 2x2)
         if self._after_pixmap:
-            painter.drawPixmap(target_rect, self._after_pixmap)
+            for ty in range(2):
+                for tx in range(2):
+                    tile_rect = QRect(start_x + tx * tile_w, start_y + ty * tile_h, tile_w, tile_h)
+                    painter.drawPixmap(tile_rect, self._after_pixmap)
             
-        # 3. Dim the Non-Seam Areas
-        # Calculate the non-seam region by subtracting seam_region from image rect
-        full_image_region = QRegion(target_rect)
-        dim_region = full_image_region - seam_region
-        
-        painter.setClipRegion(dim_region)
-        painter.fillRect(target_rect, QColor(0, 0, 0, 180)) # Dimmed overlay
-        painter.setClipping(False)
-        
-        # 4. Draw Original Image (Mixed in Seam Regions)
+        # 3. Draw Original Image (Full 2x2) with opacity
         if self._before_pixmap:
-            # Opacity based on blend factor. 
-            # t=0 (Original) -> 100% Original
-            # t=1 (Processed) -> 0% Original (showing Processed underneath)
             opacity = 1.0 - self._blend_factor
-            
-            # Only draw/clip if we have some opacity
             if opacity > 0.01:
-                painter.setClipRegion(seam_region)
                 painter.setOpacity(opacity)
-                painter.drawPixmap(target_rect, self._before_pixmap)
+                for ty in range(2):
+                    for tx in range(2):
+                        tile_rect = QRect(start_x + tx * tile_w, start_y + ty * tile_h, tile_w, tile_h)
+                        painter.drawPixmap(tile_rect, self._before_pixmap)
                 painter.setOpacity(1.0)
-                painter.setClipping(False)
         
-        # 5. Draw Visual Guides
+        # 4. Draw Seam Guides (Optional)
         if self._show_guides:
-            pen = QPen(QColor(0, 152, 255, 128), 1, Qt.PenStyle.DashLine)
+            pen = QPen(QColor(0, 152, 255, 80), 1, Qt.PenStyle.DashLine)
             painter.setPen(pen)
             
-            # Draw outlines of the seam bands
-            # Inner border lines
-            painter.drawLine(x + pad, y + pad, x + scaled_w - pad, y + pad) 
-            painter.drawLine(x + pad, y + scaled_h - pad, x + scaled_w - pad, y + scaled_h - pad) 
-            painter.drawLine(x + pad, y + pad, x + pad, y + scaled_h - pad) 
-            painter.drawLine(x + scaled_w - pad, y + pad, x + scaled_w - pad, y + scaled_h - pad)
+            # Draw center cross for 2x2
+            cx = start_x + tile_w
+            cy = start_y + tile_h
+            painter.drawLine(cx, start_y, cx, start_y + scaled_h)
+            painter.drawLine(start_x, cy, start_x + scaled_w, cy)
             
-            # Center cross lines
-            painter.drawLine(x, cy - pad, x + scaled_w, cy - pad)
-            painter.drawLine(x, cy + pad, x + scaled_w, cy + pad)
-            painter.drawLine(cx - pad, y, cx - pad, y + scaled_h)
-            painter.drawLine(cx + pad, y, cx + pad, y + scaled_h)
+            # Draw outer borders
+            painter.drawRect(start_x, start_y, scaled_w, scaled_h)
 
-        # 6. Draw Blend Slider UI
+        # 5. Draw Blend Slider UI
         slider_h = 6
         slider_y = self.height() - 30
         slider_margin_x = 40
@@ -317,7 +290,7 @@ class SplitViewCanvas(QWidget):
         proc_w = fm.horizontalAdvance(proc_text)
         painter.drawText(slider_rect.right() - proc_w, label_y, proc_text)
         
-        # Title
+        # Title and Header Line
         painter.setPen(QColor(255, 255, 255))
         font = painter.font()
         font.setBold(True)
