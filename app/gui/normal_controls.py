@@ -15,6 +15,7 @@ class NormalControlPanel(QWidget):
     parametersChanged = pyqtSignal()
     livePreviewRequested = pyqtSignal()
     generateClicked = pyqtSignal()
+    exportClicked = pyqtSignal()
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -29,7 +30,7 @@ class NormalControlPanel(QWidget):
         params_group = QGroupBox("Normal Parameters")
         params_layout = QVBoxLayout(params_group)
         
-        self.intensity = LabeledSlider("Intensity", 1, 500, 100, suffix="")
+        self.intensity = LabeledSlider("Intensity", 0, 100, 50)
         self.intensity.valueChanged.connect(self._on_live_update)
         params_layout.addWidget(self.intensity)
         
@@ -47,7 +48,25 @@ class NormalControlPanel(QWidget):
         
         layout.addWidget(params_group)
         
-        # 2. Format Group
+        # 2. Map Type Group
+        type_group = QGroupBox("Map Type")
+        type_layout = QHBoxLayout(type_group)
+        
+        self.type_group = QButtonGroup(self)
+        self.normal_radio = QRadioButton("Normal Map (RGB)")
+        self.bump_radio = QRadioButton("Bump Map (Grayscale)")
+        self.normal_radio.setChecked(True)
+        
+        self.type_group.addButton(self.normal_radio)
+        self.type_group.addButton(self.bump_radio)
+        
+        type_layout.addWidget(self.normal_radio)
+        type_layout.addWidget(self.bump_radio)
+        self.type_group.buttonClicked.connect(self._on_live_update)
+        
+        layout.addWidget(type_group)
+        
+        # 3. Format Group
         format_group = QGroupBox("Format")
         format_layout = QHBoxLayout(format_group)
         
@@ -76,39 +95,72 @@ class NormalControlPanel(QWidget):
         
         layout.addWidget(contrast_group)
         
-        # 4. Preview System
-        preview_group = QGroupBox("Preview System")
-        preview_layout = QVBoxLayout(preview_group)
+        # 4. Export Options
+        export_group = QGroupBox("Export Options")
+        export_layout = QVBoxLayout(export_group)
+        export_layout.setSpacing(10)
         
-        self.preview_mode = QComboBox()
-        self.preview_mode.addItems(["Flat Plane", "Sphere"])
-        self.preview_mode.currentIndexChanged.connect(self.parametersChanged)
-        preview_layout.addWidget(self.preview_mode)
+        # Format selector
+        format_layout = QHBoxLayout()
+        format_layout.addWidget(QLabel("Format:"))
+        self.export_format_combo = QComboBox()
+        self.export_format_combo.addItems(["PNG", "JPG", "TIFF"])
+        format_layout.addWidget(self.export_format_combo)
+        export_layout.addLayout(format_layout)
         
-        layout.addWidget(preview_group)
+        # Save mode radio buttons
+        self.save_mode_group = QButtonGroup(self)
         
+        self.new_file_radio = QRadioButton("Save as new file (_normal/_bump)")
+        self.new_file_radio.setChecked(True)
+        self.save_mode_group.addButton(self.new_file_radio, 0)
+        export_layout.addWidget(self.new_file_radio)
+        
+        self.overwrite_radio = QRadioButton("Overwrite original")
+        self.save_mode_group.addButton(self.overwrite_radio, 1)
+        export_layout.addWidget(self.overwrite_radio)
+        
+        # Export button
+        self.export_btn = QPushButton("Export Map")
+        self.export_btn.clicked.connect(self.exportClicked.emit)
+        export_layout.addWidget(self.export_btn)
+        
+        layout.addWidget(export_group)
+
         layout.addStretch()
         
-        # 5. Actions
-        self.generate_btn = QPushButton("Generate Normal Map")
-        self.generate_btn.setMinimumHeight(40)
-        self.generate_btn.setStyleSheet("background-color: #0098ff; color: white; font-weight: bold;")
-        self.generate_btn.clicked.connect(self.generateClicked)
-        layout.addWidget(self.generate_btn)
+        # Status label
+        self.status_label = QLabel("Maps update automatically")
+        self.status_label.setStyleSheet("color: #888; font-size: 11px; padding: 10px;")
+        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(self.status_label)
 
     def _on_live_update(self, *args):
         self.livePreviewRequested.emit()
         
     def get_parameters(self):
+        intensity_val = self.intensity.value() / 100.0
         return {
-            'intensity': self.intensity.value() / 100.0,
+            'intensity': intensity_val,
             'detail_scale': self.detail_scale.value() / 100.0,
             'smoothness': self.smoothness.value() / 100.0,
             'invert_height': self.invert_height.isChecked(),
             'format': 'directx' if self.directx_radio.isChecked() else 'opengl',
             'contrast_mode': self.contrast_combo.currentText().lower(),
-            'preview_shape': self.preview_mode.currentText().lower()
+            'map_type': 'bump' if self.bump_radio.isChecked() else 'normal',
+            'height_intensity': intensity_val  # Same slider controls both modes
         }
         
     def set_image_loaded(self, loaded):
-        self.generate_btn.setEnabled(loaded)
+        # No generate button anymore - everything is automatic
+        self.export_btn.setEnabled(loaded)
+        
+    def get_export_format(self):
+        """Get selected export format."""
+        return self.export_format_combo.currentText().lower()
+        
+    def get_save_mode(self):
+        """Get save mode: 'new_file' or 'overwrite'."""
+        if self.new_file_radio.isChecked():
+            return 'new_file'
+        return 'overwrite'

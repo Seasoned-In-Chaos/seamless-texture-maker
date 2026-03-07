@@ -69,11 +69,19 @@ def load_image(filepath):
             metadata.bit_depth = 32
     
     # Load image with OpenCV for processing
-    # Use IMREAD_UNCHANGED to preserve alpha and bit depth
-    image = cv2.imread(filepath, cv2.IMREAD_UNCHANGED)
+    # Use imdecode to support unicode paths on Windows
+    try:
+        # Read file as byte stream
+        with open(filepath, 'rb') as f:
+            file_bytes = np.frombuffer(f.read(), dtype=np.uint8)
+        
+        image = cv2.imdecode(file_bytes, cv2.IMREAD_UNCHANGED)
+        
+    except Exception as e:
+        raise IOError(f"Failed to read image file: {e}")
     
     if image is None:
-        raise IOError(f"Failed to load image: {filepath}")
+        raise IOError(f"Failed to decode image: {filepath}")
     
     return image, metadata
 
@@ -153,6 +161,19 @@ def get_output_path(input_path, suffix='_seamless', output_format=None):
     Returns:
         New file path
     """
+    # Handle None input_path gracefully
+    if input_path is None:
+        # Return a sensible default
+        ext = '.png'
+        if output_format:
+            ext_map = {
+                'png': '.png',
+                'jpg': '.jpg',
+                'tiff': '.tiff'
+            }
+            ext = ext_map.get(output_format.lower(), '.png')
+        return f"output{suffix}{ext}"
+    
     directory = os.path.dirname(input_path)
     basename = os.path.basename(input_path)
     name, ext = os.path.splitext(basename)

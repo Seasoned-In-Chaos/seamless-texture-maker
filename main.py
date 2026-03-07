@@ -20,7 +20,6 @@ from app.utils.config import APP_NAME
 
 def get_icon_path():
     """Get path to application icon."""
-    # Look for icon in resources folder
     possible_paths = [
         os.path.join(app_dir, 'resources', 'icon.ico'),
         os.path.join(app_dir, 'resources', 'icon.png'),

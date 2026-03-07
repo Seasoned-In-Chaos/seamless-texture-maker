@@ -21,6 +21,7 @@ from ..core.normal_generator import NormalGenerator
 from ..core.gpu_utils import is_cuda_available
 from ..utils.image_io import load_image, save_image, get_output_path, get_format_filter, get_file_info
 from ..utils.config import APP_NAME, APP_VERSION, load_settings, save_settings
+from .system_monitor import StatusBarMonitor
 
 
 class ProcessingThread(QThread):
@@ -99,6 +100,8 @@ class MainWindow(QMainWindow):
         self.processing_thread = None
         self.preview_thread = PreviewThread(self.processor)
         self.preview_thread.result_ready.connect(self._on_preview_ready)
+        self.image_np = None  # Store raw numpy image for normal map processing
+        self.processed_normal_map = None  # Store generated normal/bump map for export
         
         # Load settings
         self.settings = load_settings()
@@ -265,6 +268,10 @@ class MainWindow(QMainWindow):
         self.progress.hide()
         self.status_bar.addPermanentWidget(self.progress)
 
+        # System Monitor (CPU/RAM/GPU) — right side of status bar
+        self._monitor = StatusBarMonitor()
+        self.status_bar.addPermanentWidget(self._monitor)
+
         # Update timer for live preview - 16ms for 60fps feel
         self.update_timer = QTimer()
         self.update_timer.setSingleShot(True)
@@ -282,13 +289,15 @@ class MainWindow(QMainWindow):
         # Seamless Panel signals
         self.control_panel.parametersChanged.connect(self._on_parameters_changed)
         self.control_panel.livePreviewRequested.connect(self._on_live_preview_requested)
-        self.control_panel.processClicked.connect(self._process_texture)
+        # Button removed
+        # self.control_panel.processClicked.connect(self._process_texture)
         self.control_panel.exportClicked.connect(self._export_texture)
         
         # Normal Panel signals
         self.normal_panel.livePreviewRequested.connect(self._on_normal_live_update)
         self.normal_panel.generateClicked.connect(self._generate_normal_map)
         self.normal_panel.parametersChanged.connect(self._on_normal_param_changed)
+        self.normal_panel.exportClicked.connect(self._export_normal_map)
     
     def _open_file(self):
         """Open an image file."""
@@ -307,11 +316,18 @@ class MainWindow(QMainWindow):
     def _load_image(self, file_path):
         """Load an image from file."""
         try:
+            self.status_bar.showMessage("Loading image...")
+            QApplication.processEvents()
+            
             image, metadata = load_image(file_path)
             
             self.processor.load_image(image)
             self.current_file_path = file_path
             self.image_metadata = metadata
+            
+            # Store raw numpy image for normal map processing
+            self.image_np = image.copy()
+            self.processed_normal_map = None  # Reset processed map
             
             # Update UI
             self.image_viewer.set_before_image(image)
@@ -333,11 +349,19 @@ class MainWindow(QMainWindow):
             
             self.setWindowTitle(f"{APP_NAME} - {os.path.basename(file_path)}")
             
-            # Automatically process texture on load so canvas isn't blank
+            self.status_bar.showMessage(f"Loaded {os.path.basename(file_path)}", 3000)
+            
+            # Automatically process based on current mode
             # (Deferred slightly to allow UI to update first)
-            QTimer.singleShot(100, self._process_texture)
+            if self.btn_normal.isChecked():
+                # In Normal Map mode - auto-generate preview
+                QTimer.singleShot(100, self._on_normal_live_update)
+            else:
+                # In Seamless mode - auto-process texture
+                QTimer.singleShot(100, self._process_texture)
             
         except Exception as e:
+            self.progress.hide()
             QMessageBox.critical(self, "Error", f"Failed to load image:\n{str(e)}")
     
     def _on_parameters_changed(self):
@@ -378,7 +402,8 @@ class MainWindow(QMainWindow):
             
             # Update viewer tabs and sync state
             if is_normal:
-                self.image_viewer.tabs.setCurrentIndex(2) # 3D Preview
+                # In Normal Map mode - show Tiled Preview (where the map will be displayed)
+                self.image_viewer.tabs.setCurrentIndex(0)  # Tiled Preview
                 if self.image_np is not None:
                     self._on_normal_live_update()
             else:
@@ -391,25 +416,34 @@ class MainWindow(QMainWindow):
             traceback.print_exc()
 
     def _on_normal_live_update(self):
-        """Real-time normal map preview (lighting)."""
+        """Real-time normal map preview."""
         if self.image_np is None:
             return
         
         try:
             params = self.normal_panel.get_parameters()
             
-            # Generate raw normals for the preview canvas
-            _, normals_raw = NormalGenerator.process(
-                self.image_np,
+            # Use seamless-processed image if available, otherwise use original
+            source_image = self.processor.processed_image if self.processor.processed_image is not None else self.image_np
+            
+            # Generate normal map or bump map
+            result_map, normals_raw = NormalGenerator.process(
+                source_image,
                 intensity=params['intensity'],
                 detail_scale=params['detail_scale'],
                 smoothness=params['smoothness'],
                 invert_height=params['invert_height'],
                 format=params['format'],
-                contrast_mode=params['contrast_mode']
+                contrast_mode=params['contrast_mode'],
+                map_type=params['map_type'],
+                height_intensity=params['height_intensity']
             )
             
-            self.image_viewer.normal_view.set_normals(normals_raw)
+            # Store the generated map for export
+            self.processed_normal_map = result_map
+            
+            # Simply display the generated map
+            self.image_viewer.set_after_image(result_map)
         except Exception as e:
             print(f"Error generating normal preview: {e}")
             import traceback
@@ -427,25 +461,34 @@ class MainWindow(QMainWindow):
         
         try:
             print(f"Generating normal map with params: {params}")
-            print(f"Input image shape: {self.image_np.shape}, dtype: {self.image_np.dtype}")
+            
+            # Use seamless-processed image if available, otherwise use original
+            source_image = self.processor.processed_image if self.processor.processed_image is not None else self.image_np
+            print(f"Input image shape: {source_image.shape}, dtype: {source_image.dtype}")
             
             normal_map, normals_raw = NormalGenerator.process(
-                self.image_np,
+                source_image,
                 intensity=params['intensity'],
                 detail_scale=params['detail_scale'],
                 smoothness=params['smoothness'],
                 invert_height=params['invert_height'],
                 format=params['format'],
-                contrast_mode=params['contrast_mode']
+                contrast_mode=params['contrast_mode'],
+                map_type=params['map_type'],
+                height_intensity=params['height_intensity']
             )
             
             print(f"Normal map generated: shape={normal_map.shape}, dtype={normal_map.dtype}")
-            print(f"Normals raw: shape={normals_raw.shape}, dtype={normals_raw.dtype}")
+            if normals_raw is not None:
+                print(f"Normals raw: shape={normals_raw.shape}, dtype={normals_raw.dtype}")
+            else:
+                print("Bump map mode - no normals generated")
             
+            # Store the generated map for export
+            self.processed_normal_map = normal_map
             # Treat the Normal Map as the 'processed' result
             self.processed_np = normal_map
             self.image_viewer.set_after_image(normal_map)
-            self.image_viewer.normal_view.set_normals(normals_raw)
             
             self.status_bar.showMessage("Normal Map ready", 3000)
             print("Normal map generation complete!")
@@ -459,27 +502,31 @@ class MainWindow(QMainWindow):
             self.setCursor(Qt.CursorShape.ArrowCursor)
 
     def _on_normal_param_changed(self):
-        """Handle preview shape changes etc."""
-        params = self.normal_panel.get_parameters()
-        self.image_viewer.normal_view.set_preview_shape(params['preview_shape'])
+        """Handle parameter changes."""
+        # Reserved for future use
+        pass
     
     def _process_texture(self):
         """Process the texture to make it seamless."""
         if self.processor.original_image is None:
             return
         
+        # If already processing, mark for re-process when done
+        if self.processing_thread is not None and self.processing_thread.isRunning():
+            self._pending_reprocess = True
+            return
+        
+        self._pending_reprocess = False
+        
         # Show progress
         self.progress.setRange(0, 0)  # Indeterminate
         self.progress.show()
-        self.control_panel.process_btn.setEnabled(False)
         
         # Update parameters
         params = self.control_panel.get_parameters()
         self.processor.set_parameters(**params)
         
         # Process in background thread
-        if self.processing_thread is not None:
-            self.processing_thread.wait()
         self.processing_thread = ProcessingThread(self.processor, self)
         self.processing_thread.finished.connect(self._on_processing_finished)
         self.processing_thread.error.connect(self._on_processing_error)
@@ -488,7 +535,6 @@ class MainWindow(QMainWindow):
     def _on_processing_finished(self, result, elapsed_time):
         """Handle processing completion."""
         self.progress.hide()
-        self.control_panel.process_btn.setEnabled(True)
         
         # Update viewer
         self.image_viewer.set_after_image(result)
@@ -499,11 +545,15 @@ class MainWindow(QMainWindow):
         # Update status
         self.control_panel.set_info(f"Processed in {elapsed_time:.2f}s")
         self.status_bar.showMessage(f"Processing complete ({elapsed_time:.2f}s)", 3000)
+        
+        # Re-process if slider changed while we were busy
+        if getattr(self, '_pending_reprocess', False):
+            self._process_texture()
     
     def _on_processing_error(self, error_msg):
         """Handle processing error."""
         self.progress.hide()
-        self.control_panel.process_btn.setEnabled(True)
+        # self.control_panel.process_btn.setEnabled(True)
         QMessageBox.critical(self, "Processing Error", f"Failed to process texture:\n{error_msg}")
     
     def _save_file(self):
@@ -561,6 +611,58 @@ class MainWindow(QMainWindow):
     def _export_texture(self):
         """Export the processed texture."""
         self._save_file()
+
+    def _export_normal_map(self):
+        """Export the generated normal/bump map."""
+        if self.processed_normal_map is None:
+            QMessageBox.warning(self, "No Map", "No map generated to export.")
+            return
+
+        if self.current_file_path is None:
+            QMessageBox.warning(self, "No Image", "No image file loaded. Cannot determine output path.")
+            return
+
+        # Get save mode
+        save_mode = self.normal_panel.get_save_mode()
+        
+        if save_mode == 'overwrite':
+            if QMessageBox.question(self, 'Confirm Overwrite', 'Overwrite original file?', QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes:
+                file_path = self.current_file_path
+                self._save_map_to_path(file_path)
+        else:
+            # Get format from normal panel
+            export_format = self.normal_panel.get_export_format()
+            
+            # Suffix based on map type
+            params = self.normal_panel.get_parameters()
+            suffix = '_bump' if params['map_type'] == 'bump' else '_normal'
+            
+            default_name = get_output_path(self.current_file_path, suffix, export_format)
+            
+            file_path, _ = QFileDialog.getSaveFileName(
+                self,
+                "Save Normal/Bump Map",
+                default_name,
+                get_format_filter()
+            )
+            
+            if file_path:
+                self._save_map_to_path(file_path)
+                
+    def _save_map_to_path(self, file_path):
+        """Helper to save the map."""
+        try:
+            # Use the stored processed normal/bump map
+            map_image = self.processed_normal_map
+            
+            save_image(
+                map_image,
+                file_path,
+                metadata=self.image_metadata
+            )
+            self.status_bar.showMessage(f"Saved Map: {file_path}", 5000)
+        except Exception as e:
+            QMessageBox.critical(self, "Save Error", f"Failed to save map:\n{str(e)}")
     
     def _fit_to_view(self):
         """Fit image to view."""
@@ -587,6 +689,15 @@ class MainWindow(QMainWindow):
         self.settings['window_height'] = self.height()
         self.settings.update(self.control_panel.get_parameters())
         save_settings(self.settings)
+        
+        # Stop system monitor
+        if hasattr(self, '_monitor'):
+            self._monitor.stop()
+        
+        # Wait for preview thread
+        if self.preview_thread.isRunning():
+            self.preview_thread.quit()
+            self.preview_thread.wait(2000)
         
         # Wait for processing thread if running (with timeout)
         if self.processing_thread and self.processing_thread.isRunning():

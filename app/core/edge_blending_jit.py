@@ -84,17 +84,22 @@ def calculate_blend_weights(half_blend, smoothness):
     """
     weights = np.empty(half_blend, dtype=np.float32)
     
+    # Cosine Interpolation (S-Curve) for Maximum Smoothness
+    # Replaces Gamma logic
+    
     for i in range(half_blend):
         offset = i + 1
-        t = offset / half_blend
+        t = offset / half_blend # 0.0 to 1.0
         
-        # Apply smoothstep
-        if smoothness > 0.01:
-            t = t * t * (3.0 - 2.0 * t)
-            gamma = 1.0 / (smoothness * 2.0)
-            t = t ** gamma
+        # Angle 0 -> PI
+        angle = t * np.pi
         
-        weights[i] = t
+        # Weight 0.5 -> 0.0
+        # (Cos + 1) / 2 goes 1 -> 0
+        # We want 0.5 * (Cos + 1) / 2
+        weight = 0.25 * (np.cos(angle) + 1.0)
+
+        weights[i] = weight
     
     return weights
 

@@ -74,8 +74,8 @@ def smart_seam_inpaint(image, seam_width=30, detail_preservation=0.5, method='te
     Args:
         image: Input image (offset so seams are at center)
         seam_width: Width of the seam region to inpaint
-        detail_preservation: How much detail to preserve (0.0-1.0)
-        method: Inpainting method ('telea' or 'ns')
+        detail_preservation: Unused (kept for API compatibility)
+        method: Inpainting method ('ns' or 'telea')
     
     Returns:
         Image with inpainted seams
@@ -83,12 +83,11 @@ def smart_seam_inpaint(image, seam_width=30, detail_preservation=0.5, method='te
     h, w = image.shape[:2]
     
     # Create cross mask at center (where seams are after offset)
+    # Create cross mask at center (where seams are after offset)
     mask = np.zeros((h, w), dtype=np.uint8)
     
-    # Adjust seam width based on detail preservation
-    # Higher detail preservation = narrower inpaint region
-    adjusted_width = int(seam_width * (1.0 - detail_preservation * 0.5))
-    adjusted_width = max(2, adjusted_width)
+    # Adjust seam width
+    adjusted_width = max(2, seam_width)
     
     # Vertical seam at center
     cx = w // 2
@@ -102,25 +101,49 @@ def smart_seam_inpaint(image, seam_width=30, detail_preservation=0.5, method='te
     y2 = min(h, cy + adjusted_width // 2)
     mask[y1:y2, :] = 255
     
-    # Inpainting radius based on seam width
-    radius = max(3, adjusted_width // 2)
+    # Optimization: Downscale for large images
+    # Inpainting is O(N*R^2), so reducing size helps significantly
+    max_dim = max(h, w)
+    scale_factor = 1.0
     
-    # Apply inpainting
-    result = inpaint_seams(image, mask, method, radius)
-    
-    # Blend with original to preserve some details if needed
-    if detail_preservation > 0:
-        # Create soft mask for blending
-        soft_mask = cv2.GaussianBlur(mask.astype(np.float32), (21, 21), 0)
-        soft_mask = soft_mask / 255.0
+    if max_dim > 2048:
+        scale_factor = 2048.0 / max_dim
+        new_w = int(w * scale_factor)
+        new_h = int(h * scale_factor)
         
-        # Reduce blend based on detail preservation
-        blend_factor = soft_mask * (1.0 - detail_preservation * 0.3)
+        # Downscale image and mask
+        s_img = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        s_mask = cv2.resize(mask, (new_w, new_h), interpolation=cv2.INTER_NEAREST)
+        
+        # Scale radius
+        s_radius = max(3, int((adjusted_width // 2) * scale_factor))
+        
+        # Inpaint
+        s_result = inpaint_seams(s_img, s_mask, 'ns', s_radius)
+        
+        # Upscale result
+        # We only want to replace the INPAINTED regions to preserve quality elsewhere
+        # But smart_seam_inpaint returns a full image.
+        
+        # Better: Upscale the result and blend back only the seam area?
+        # Actually simple upscaling is fine for the seam area which is blurry anyway.
+        result_full = cv2.resize(s_result, (w, h), interpolation=cv2.INTER_LINEAR)
+        
+        # Blend back: use the mask to mix original (high res) and inpainted (upscaled)
+        # Dilate mask slightly to cover edges
+        blend_mask = mask.astype(np.float32) / 255.0
+        blend_mask = cv2.GaussianBlur(blend_mask, (5, 5), 0)
         
         if len(image.shape) == 3:
-            blend_factor = blend_factor[:, :, np.newaxis]
+            blend_mask = blend_mask[:, :, np.newaxis]
+            
+        result = image * (1.0 - blend_mask) + result_full * blend_mask
+        result = result.astype(np.uint8)
         
-        result = (result * (1 - blend_factor) + image * blend_factor).astype(image.dtype)
+    else:
+        # Full res processing
+        radius = max(3, adjusted_width // 2)
+        result = inpaint_seams(image, mask, 'ns', radius)
     
     return result
 

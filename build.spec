@@ -18,6 +18,12 @@ datas = tmp_ret[0]
 binaries = tmp_ret[1]
 hiddenimports = tmp_ret[2]
 
+# Also collect llvmlite (required by numba)
+tmp_llvm = collect_all('llvmlite')
+datas += tmp_llvm[0]
+binaries += tmp_llvm[1]
+hiddenimports += tmp_llvm[2]
+
 # Add 'resources' to datas
 datas.append(('resources', 'resources'))
 
@@ -32,11 +38,18 @@ a = Analysis(
         'PyQt6.QtWidgets',
         'cv2',
         'numpy',
+        'numba',
+        'numba.core',
+        'numba.typed',
+        'numba.np.ufunc',
+        'llvmlite',
+        'llvmlite.binding',
         'PIL',
         'PIL.Image',
         'PIL.PngImagePlugin',
         'PIL.JpegImagePlugin',
         'PIL.TiffImagePlugin',
+        'psutil',
     ],
     hookspath=[],
     hooksconfig={},
@@ -61,7 +74,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='SeamlessTextureMaker_v2',
+    name='SeamlessTextureMaker',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

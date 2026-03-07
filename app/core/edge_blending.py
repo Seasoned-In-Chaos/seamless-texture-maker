@@ -43,7 +43,7 @@ def create_gradient_mask(width, height, direction='horizontal', symmetric=True):
 
 def create_blend_mask(height, width, blend_width, symmetric=True, falloff=0.5):
     """
-    Create a blend mask for the center cross seam using power curve falloff.
+    Create a blend mask for the center cross seam using overlap-style hardness falloff.
     
     Args:
         height: Image height
@@ -57,11 +57,10 @@ def create_blend_mask(height, width, blend_width, symmetric=True, falloff=0.5):
     """
     mask = np.ones((height, width), dtype=np.float32)
     
-    # Calculate gamma for power curve
-    # falloff 0.5 -> gamma 1.0 (linear)
-    # falloff 0.2 -> gamma 2.5 (sharper transition)
-    # falloff 0.8 -> gamma 0.6 (softer transition)
-    gamma = 1.0 / (max(0.01, falloff) * 2.0)
+    # Calculate hardness
+    # falloff 1.0 -> hardness 1.0 (linear)
+    # falloff 0.0 -> hardness 1000 (hard step)
+    hardness = 1.0 / max(0.001, falloff)
     
     # Horizontal blend zone (vertical seam at center)
     cx = width // 2
@@ -74,8 +73,8 @@ def create_blend_mask(height, width, blend_width, symmetric=True, falloff=0.5):
         x_coords = np.arange(x1, x2)
         # Normalized distance 0..1 (0 at center, 1 at edge)
         dist = np.abs(x_coords - cx) / half_blend
-        # Apply power curve
-        curve = np.power(dist, gamma)
+        # Apply hardness curve
+        curve = np.clip(dist * hardness, 0, 1)
         mask[:, x1:x2] *= curve[np.newaxis, :]
     
     # Vertical blend zone (horizontal seam at center)
@@ -86,164 +85,119 @@ def create_blend_mask(height, width, blend_width, symmetric=True, falloff=0.5):
     if symmetric and half_blend > 0:
         y_coords = np.arange(y1, y2)
         dist = np.abs(y_coords - cy) / half_blend
-        curve = np.power(dist, gamma)
+        curve = np.clip(dist * hardness, 0, 1)
         mask[y1:y2, :] *= curve[:, np.newaxis]
     
     return mask
 
 
-def blend_seams(image, blend_strength=0.5, smoothness=0.5, symmetric=True):
+def blend_seams(image, blend_strength=0.5, smoothness=0.5, symmetric=True, original_image=None, fixed_width=None):
     """
     Blend the seams at the center of an offset image.
+    Fully vectorized — no Python per-pixel loops.
     
     Args:
         image: Input image (offset so seams are at center)
         blend_strength: Strength of the blend (determines width)
         smoothness: Edge Falloff (0.0=Sharp, 1.0=Soft) (Used as falloff param)
         symmetric: Use symmetric blending
+        original_image: The original offset image (required for non-symmetric falloff)
+        fixed_width: Override blend width in pixels (useful to match inpaint mask)
     
     Returns:
         Image with blended seams
     """
     h, w = image.shape[:2]
     
-    # Calculate blend width based on strength (seam width)
-    max_blend_width = min(h, w) // 4
-    blend_width = int(max_blend_width * blend_strength)
+    # Calculate blend width
+    if fixed_width is not None:
+        blend_width = int(fixed_width * 1.5)
+    else:
+        max_blend_width = min(h, w) // 10
+        blend_width = int(max_blend_width * blend_strength)
     
     if blend_width < 2:
         return image.copy()
     
-    
     if not symmetric:
-        # Soft Falloff (Gaussian Blur Method)
-        # This blurs the seam area to create a smooth transition without mirroring
+        # ── Non-Symmetric Blend (vectorized) ─────────────────────
+        if original_image is None:
+            return image.copy()
+
+        result = image.copy().astype(np.float32)
+        orig = original_image.astype(np.float32)
+        img_f = image.astype(np.float32)
         
-        # Create mask for the blend region
-        mask = np.zeros(image.shape[:2], dtype=np.float32)
-        
-        # Horizontal seam (Vertical strip at center)
         cx = w // 2
-        half_blend = blend_width // 2
-        x1 = max(0, cx - half_blend)
-        x2 = min(w, cx + half_blend)
-        
-        # Create gradient for mask
-        if half_blend > 0:
-             x_coords = np.arange(x1, x2)
-             dist = np.abs(x_coords - cx) / half_blend # 0 at center, 1 at edge
-             # Invert: 1 at center, 0 at edge
-             mask_vals = 1.0 - dist
-             # Smooth it
-             mask_vals = mask_vals * mask_vals * (3.0 - 2.0 * mask_vals)
-             mask[:, x1:x2] = np.maximum(mask[:, x1:x2], mask_vals[np.newaxis, :])
-        
-        # Vertical seam (Horizontal strip at center)
         cy = h // 2
-        y1 = max(0, cy - half_blend)
-        y2 = min(h, cy + half_blend)
+        half_blend = blend_width // 2
         
         if half_blend > 0:
-             y_coords = np.arange(y1, y2)
-             dist = np.abs(y_coords - cy) / half_blend
-             mask_vals = 1.0 - dist
-             mask_vals = mask_vals * mask_vals * (3.0 - 2.0 * mask_vals)
-             mask[y1:y2, :] = np.maximum(mask[y1:y2, :], mask_vals[:, np.newaxis])
-             
-        # Apply blur
-        # Blur radius controlled by smoothness param
-        # smoothness 0.0 -> small radius (3)
-        # smoothness 1.0 -> large radius (proportional to blend width)
-        
-        base_radius = max(3, blend_width // 2)
-        scaled_radius = int(3 + (base_radius - 3) * smoothness)
-        blur_radius = scaled_radius | 1 # Must be odd
-        
-        if blur_radius < 3: blur_radius = 3
+            offsets = np.arange(1, half_blend + 1)
+            t = offsets / half_blend
+            # Cosine S-curve: 1 → 0
+            weights = (np.cos(t * np.pi) + 1.0) * 0.5  # shape: (half_blend,)
             
-        blurred = cv2.GaussianBlur(image, (blur_radius, blur_radius), 0)
-        
-        # Blend original and blurred using mask
-        if len(image.shape) == 3:
-            mask = mask[:, :, np.newaxis]
+            # ── Horizontal seam (column indices) ──
+            left_cols  = (cx - offsets) % w
+            right_cols = (cx + offsets) % w
             
-        result = image.astype(np.float32) * (1 - mask) + blurred.astype(np.float32) * mask
+            # weights shape for broadcasting: (1, half_blend) or (1, half_blend, 1)
+            if len(image.shape) == 3:
+                w_col = weights[np.newaxis, :, np.newaxis]  # (1, N, C)
+            else:
+                w_col = weights[np.newaxis, :]              # (1, N)
+            
+            result[:, left_cols]  = img_f[:, left_cols]  * w_col + orig[:, left_cols]  * (1 - w_col)
+            result[:, right_cols] = img_f[:, right_cols] * w_col + orig[:, right_cols] * (1 - w_col)
+            
+            # ── Vertical seam (row indices) ──
+            top_rows    = (cy - offsets) % h
+            bottom_rows = (cy + offsets) % h
+            
+            if len(image.shape) == 3:
+                w_row = weights[:, np.newaxis, np.newaxis]  # (N, 1, C)
+            else:
+                w_row = weights[:, np.newaxis]               # (N, 1)
+            
+            result[top_rows, :]    = img_f[top_rows, :]    * w_row + orig[top_rows, :]    * (1 - w_row)
+            result[bottom_rows, :] = img_f[bottom_rows, :] * w_row + orig[bottom_rows, :] * (1 - w_row)
+                     
         return result.astype(image.dtype)
         
-    # Standard Symmetric (Mirror) Blending
-    # VECTORIZED IMPROVED: Use distance-based gradient blending without Python loops
-    # This preserves edge details while creating smooth transitions
-    
+    # ── Symmetric (Mirror) Blending (vectorized) ──────────────
     result = image.copy().astype(np.float32)
+    img_f = image.astype(np.float32)
     
-    # Horizontal seam blending (at center vertical line)
     cx = w // 2
+    cy = h // 2
     half_blend = blend_width // 2
     
     if half_blend > 0:
-        # Vectorized blending - create all weights at once
         offsets = np.arange(1, half_blend + 1)
-        t_values = offsets / half_blend
+        t = offsets / half_blend
+        weights = 0.25 * (np.cos(t * np.pi) + 1.0)  # shape: (half_blend,)
         
-        # Apply smoothstep interpolation vectorized
-        if smoothness > 0.01:
-            t_values = t_values * t_values * (3.0 - 2.0 * t_values)
-            gamma = 1.0 / (smoothness * 2.0)
-            t_values = np.power(t_values, gamma)
+        # ── Horizontal seam ──
+        left_cols  = (cx - offsets) % w
+        right_cols = (cx + offsets) % w
         
-        # Process all columns at once using broadcasting
-        for i, (offset, weight) in enumerate(zip(offsets, t_values)):
-            left_col = (cx - offset) % w
-            right_col = (cx + offset) % w
-            result[:, left_col] = (1 - weight) * image[:, left_col] + weight * image[:, right_col]
-    
-    # Vertical seam blending (at center horizontal line)
-    cy = h // 2
-    
-    if half_blend > 0:
-        offsets = np.arange(1, half_blend + 1)
-        t_values = offsets / half_blend
+        if len(image.shape) == 3:
+            w_col = weights[np.newaxis, :, np.newaxis]
+        else:
+            w_col = weights[np.newaxis, :]
         
-        # Apply smoothstep interpolation vectorized
-        if smoothness > 0.01:
-            t_values = t_values * t_values * (3.0 - 2.0 * t_values)
-            gamma = 1.0 / (smoothness * 2.0)
-            t_values = np.power(t_values, gamma)
+        result[:, left_cols] = (1 - w_col) * img_f[:, left_cols] + w_col * img_f[:, right_cols]
         
-        # Process all rows at once
-        for i, (offset, weight) in enumerate(zip(offsets, t_values)):
-            top_row = (cy - offset) % h
-            bottom_row = (cy + offset) % h
-            result[top_row, :] = (1 - weight) * image[top_row, :] + weight * image[bottom_row, :]
+        # ── Vertical seam ──
+        top_rows    = (cy - offsets) % h
+        bottom_rows = (cy + offsets) % h
+        
+        if len(image.shape) == 3:
+            w_row = weights[:, np.newaxis, np.newaxis]
+        else:
+            w_row = weights[:, np.newaxis]
+        
+        result[top_rows, :] = (1 - w_row) * img_f[top_rows, :] + w_row * img_f[bottom_rows, :]
     
     return result.astype(image.dtype)
-
-
-def apply_edge_blend(image, left_edge, right_edge, blend_width):
-    """
-    Blend two edges together smoothly.
-    
-    Args:
-        image: Full image
-        left_edge: Left edge strip
-        right_edge: Right edge strip
-        blend_width: Width of blend zone
-    
-    Returns:
-        Blended image
-    """
-    result = image.copy()
-    
-    # Create linear gradient for blending
-    gradient = np.linspace(0, 1, blend_width).astype(np.float32)
-    
-    if len(image.shape) == 3:
-        gradient = gradient[np.newaxis, :, np.newaxis]
-        gradient = np.broadcast_to(gradient, (image.shape[0], blend_width, image.shape[2]))
-    else:
-        gradient = np.broadcast_to(gradient, (image.shape[0], blend_width))
-    
-    # Blend the edges
-    blended = (left_edge * (1 - gradient) + right_edge * gradient).astype(image.dtype)
-    
-    return blended

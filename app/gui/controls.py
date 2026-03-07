@@ -5,7 +5,7 @@ Supports multiple processing methods (Standard, Overlap, Splat).
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QSlider,
     QComboBox, QGroupBox, QPushButton, QRadioButton,
-    QButtonGroup, QFrame, QSpacerItem, QSizePolicy, QStackedWidget
+    QButtonGroup, QFrame, QSpacerItem, QSizePolicy
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 
@@ -25,16 +25,17 @@ class LabeledSlider(QWidget):
         self.suffix = suffix
         
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 8)
+        layout.setContentsMargins(0, 0, 0, 2)
         layout.setSpacing(4)
         
         # Header with label and value
         header = QHBoxLayout()
         self.label = QLabel(label)
         self.value_label = QLabel(f"{default}{suffix}")
-        self.value_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.value_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.value_label.setStyleSheet("color: #0098ff; font-weight: bold;")
         header.addWidget(self.label)
+        header.addStretch() # Push value to the right
         header.addWidget(self.value_label)
         layout.addLayout(header)
         
@@ -100,58 +101,24 @@ class ControlPanel(QWidget):
         
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(16)
+        layout.setSpacing(8)
         
         # Method Selector
         method_group = QGroupBox("Technique")
         method_layout = QVBoxLayout(method_group)
         self.method_combo = QComboBox()
-        self.method_combo.addItem("Standard (Offset + Inpaint)", "standard")
         self.method_combo.addItem("Technique Overlap", "overlap")
         self.method_combo.addItem("Technique Splat", "splat")
         self.method_combo.currentIndexChanged.connect(self._on_method_changed)
         method_layout.addWidget(self.method_combo)
         layout.addWidget(method_group)
         
-        # Parameters Stack
-        self.params_stack = QStackedWidget()
-        layout.addWidget(self.params_stack)
         
-        # 1. Standard Params
-        self.standard_page = QWidget()
-        standard_layout = QVBoxLayout(self.standard_page)
-        standard_layout.setContentsMargins(0, 0, 0, 0)
-        
-        self.blend_slider = LabeledSlider("Edge Blend", 0, 100, 50)
-        self.blend_slider.valueChanged.connect(self._on_param_changed)
-        self.blend_slider.sliderMoved.connect(self._on_live_update)
-        standard_layout.addWidget(self.blend_slider)
-        
-        # Manual Smoothness/Blur Control (Restored)
-        self.smoothness_slider = LabeledSlider("Smoothness / Blur", 0, 100, 50)
-        self.smoothness_slider.valueChanged.connect(self._on_param_changed)
-        self.smoothness_slider.sliderMoved.connect(self._on_live_update)
-        standard_layout.addWidget(self.smoothness_slider)
-        
-        self.detail_slider = LabeledSlider("Detail Preservation", 0, 100, 75)
-        self.detail_slider.valueChanged.connect(self._on_param_changed)
-        self.detail_slider.sliderMoved.connect(self._on_live_update)
-        standard_layout.addWidget(self.detail_slider)
-        
-        # Symmetric Blending Toggle
-        from PyQt6.QtWidgets import QCheckBox
-        self.symmetric_check = QCheckBox("Symmetric Blending (Mirror)")
-        self.symmetric_check.setChecked(True)
-        self.symmetric_check.toggled.connect(self._on_param_changed)
-        self.symmetric_check.setToolTip("Uncheck for natural soft falloff (slower)")
-        standard_layout.addWidget(self.symmetric_check)
-        
-        self.params_stack.addWidget(self.standard_page)
-        
-        # 2. Overlap Params
+        # 1. Overlap Params
         self.overlap_page = QWidget()
         overlap_layout = QVBoxLayout(self.overlap_page)
         overlap_layout.setContentsMargins(0, 0, 0, 0)
+        overlap_layout.setSpacing(2)
         
         self.overlap_x_slider = LabeledSlider("Overlap X", 0, 50, 20)
         self.overlap_x_slider.valueChanged.connect(self._on_param_changed)
@@ -168,12 +135,13 @@ class ControlPanel(QWidget):
         self.ov_falloff_slider.sliderMoved.connect(self._on_live_update)
         overlap_layout.addWidget(self.ov_falloff_slider)
         
-        self.params_stack.addWidget(self.overlap_page)
+        layout.addWidget(self.overlap_page)
         
-        # 3. Splat Params
+        # 2. Splat Params
         self.splat_page = QWidget()
         splat_layout = QVBoxLayout(self.splat_page)
         splat_layout.setContentsMargins(0, 0, 0, 0)
+        splat_layout.setSpacing(2)
         
         self.sp_falloff_slider = LabeledSlider("Edge Falloff", 0, 100, 20)
         self.sp_falloff_slider.valueChanged.connect(self._on_param_changed)
@@ -200,19 +168,19 @@ class ControlPanel(QWidget):
         self.splat_wobble.sliderMoved.connect(self._on_live_update)
         splat_layout.addWidget(self.splat_wobble)
         
-        self.splat_randomize_btn = QPushButton("Randomize Splats")
-        self.splat_randomize_btn.clicked.connect(self._on_randomize_splats)
-        self.splat_randomize_btn.setProperty("secondary", True)
-        splat_layout.addWidget(self.splat_randomize_btn)
         self.current_random_seed = 0
         
-        self.params_stack.addWidget(self.splat_page)
+        layout.addWidget(self.splat_page)
+        self.splat_page.hide()
         
-        # Process button
-        self.process_btn = QPushButton("Process Texture")
-        self.process_btn.setEnabled(False)
-        self.process_btn.clicked.connect(self.processClicked.emit)
-        layout.addWidget(self.process_btn)
+        # Track pages for switching (index 0=overlap, 1=splat)
+        self._param_pages = [self.overlap_page, self.splat_page]
+        
+        # Process button REMOVED (User request: extra/does nothing)
+        # self.process_btn = QPushButton("Process Texture")
+        # self.process_btn.setEnabled(False)
+        # self.process_btn.clicked.connect(self.processClicked.emit)
+        # layout.addWidget(self.process_btn)
         
         # Separator
         separator = QFrame()
@@ -263,7 +231,8 @@ class ControlPanel(QWidget):
         layout.addWidget(self.info_label)
     
     def _on_method_changed(self, index):
-        self.params_stack.setCurrentIndex(index)
+        for i, page in enumerate(self._param_pages):
+            page.setVisible(i == index)
         self.parametersChanged.emit()
     
     def _on_param_changed(self, *args):
@@ -279,34 +248,22 @@ class ControlPanel(QWidget):
     
     def get_parameters(self):
         """Get current parameter values."""
+        method = self.method_combo.currentData()
+        
+        # Determine edge_falloff from correct page
+        if method == 'splat':
+            edge_falloff = self.sp_falloff_slider.value() / 100.0
+        else:
+            edge_falloff = self.ov_falloff_slider.value() / 100.0
+
         params = {
-            'method': self.method_combo.currentData(),
-            # Standard
-            'blend_strength': self.blend_slider.value() / 100.0, # LabeledSlider returns 0-100 mapped? 
-                                                                 # wait, I improved LabeledSlider to return mapped value.
-                                                                 # But let's check my implementation of LabeledSlider
-                                                                 # My impl: value() returns self.min + ...
-            # Wait, LabeledSlider.value() returns the MAPPED value.
-            # So for blend_slider (0-100), it returns 0-100.
-            # BUT the processor expects 0.0-1.0 for some, and others 0-100?
-            # Current LabeledSlider implementation:
-            #   self.slider is 0-100.
-            #   value() returns min + (slider/100)*(max-min)
-            #
-            
-            # Standard params (Processor expects 0.0-1.0)
-            'blend_strength': self.blend_slider.value() / 100.0,
-            # Manual smoothness for Blur control
-            'seam_smoothness': self.smoothness_slider.value() / 100.0,
-            'detail_preservation': self.detail_slider.value() / 100.0,
-            'symmetric_blending': self.symmetric_check.isChecked(),
-            
+            'method': method,
+
             # Overlap params
-            'overlap_x': self.overlap_x_slider.value() / 100.0, # 0-50 -> 0.0-0.5
+            'overlap_x': self.overlap_x_slider.value() / 100.0,
             'overlap_y': self.overlap_y_slider.value() / 100.0,
-            'edge_falloff': self.ov_falloff_slider.value() / 100.0, # or splat falloff depending on page?
-                                                                    # Processor shares 'edge_falloff'
-            
+            'edge_falloff': edge_falloff,
+
             # Splat params
             'splat_scale': self.splat_scale.value(),
             'splat_rotation': self.splat_rot.value(),
@@ -314,24 +271,15 @@ class ControlPanel(QWidget):
             'splat_wobble': self.splat_wobble.value() / 100.0,
             'splat_randomize': self.current_random_seed
         }
-        
-        # Handle shared edge_falloff
-        if self.method_combo.currentData() == 'splat':
-            params['edge_falloff'] = self.sp_falloff_slider.value() / 100.0
-            
+
         return params
     
     def set_parameters(self, params):
         """Set parameters from dict."""
         if 'method' in params:
-             idx = self.method_combo.findData(params['method'])
-             if idx >= 0: self.method_combo.setCurrentIndex(idx)
-             
-        # Standard
-        if 'blend_strength' in params: self.blend_slider.setValue(params['blend_strength'] * 100)
-        if 'blend_strength' in params: self.blend_slider.setValue(params['blend_strength'] * 100)
-        # if 'seam_smoothness' in params: self.smoothness_slider.setValue(params['seam_smoothness'] * 100)
-        
+            idx = self.method_combo.findData(params['method'])
+            if idx >= 0:
+                self.method_combo.setCurrentIndex(idx)
         # ... others ... logic is simple enough not to need full restore for now
     
     def get_export_format(self):
@@ -346,7 +294,8 @@ class ControlPanel(QWidget):
     
     def set_image_loaded(self, loaded):
         """Enable/disable process button based on image load state."""
-        self.process_btn.setEnabled(loaded)
+        # Process button removed
+        pass
     
     def set_processed(self, processed):
         """Enable/disable export button based on processed state."""

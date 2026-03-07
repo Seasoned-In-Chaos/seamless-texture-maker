@@ -27,14 +27,16 @@ class SeamlessProcessor:
         
         # Performance optimizations
         self._cache = ResultCache(max_size=50)
+        self._splat_cache = {} # Cache for rotated patches (huge speedup)
         self.use_jit = True  # Use JIT-compiled functions
         
         # Default parameters
-        self.method = 'standard' # standard, overlap, splat
+        self.method = 'overlap'  # overlap, splat
         
         # Standard params
+        # Standard params
         self.blend_strength = 0.5
-        self.seam_smoothness = 0.5
+        self.seam_smoothness = 1.0 # Fixed to 1.0 (Linear Feather)
         self.detail_preservation = 0.75
         self.symmetric_blending = True
         
@@ -50,9 +52,35 @@ class SeamlessProcessor:
     
     def set_parameters(self, **kwargs):
         """Update processing parameters."""
+        # Handle flattened params (direct set)
         for key, value in kwargs.items():
             if hasattr(self, key):
                 setattr(self, key, value)
+        
+        # Handle nested keys from GUI (controls.py structure)
+        if 'standard' in kwargs:
+            std = kwargs['standard']
+            if 'blend' in std: self.blend_strength = std['blend']
+            # if 'smoothness' in std: self.seam_smoothness = std['smoothness'] # Removed
+            
+        if 'overlap' in kwargs:
+            ov = kwargs['overlap']
+            if 'x' in ov: self.overlap_x = ov['x']
+            if 'y' in ov: self.overlap_y = ov['y']
+            if 'falloff' in ov: self.edge_falloff = ov['falloff']
+            
+        if 'splat' in kwargs:
+            sp = kwargs['splat']
+            if 'scale' in sp: self.splat_scale = sp['scale']
+            if 'rotation' in sp: self.splat_rotation = sp['rotation']
+            if 'rand_rot' in sp: self.splat_random_rotation = sp['rand_rot']
+            if 'wobble' in sp: self.splat_wobble = sp['wobble']
+            if 'randomize' in sp: self.splat_randomize = sp['randomize']
+            if 'falloff' in sp: self.edge_falloff = sp['falloff']
+
+        # Handle old saved 'standard' method: fall back to 'overlap'
+        if self.method == 'standard':
+            self.method = 'overlap'
     
     def load_image(self, image):
         """
@@ -67,6 +95,7 @@ class SeamlessProcessor:
             self._original_image = image.copy()
         
         self._processed_image = None
+        self._splat_cache = {} # Clear patch cache
 
         # Cache preview image for live updates (smaller for maximum speed)
         if self._original_image is not None:
@@ -74,7 +103,7 @@ class SeamlessProcessor:
              self._image_hash = hash_image(self._original_image)
              
              h, w = self._original_image.shape[:2]
-             max_dim = 256  # Reduced to 256px for ultra-fast preview
+             max_dim = 200  # Very small for ultra-fast splat previews
              if max(h, w) > max_dim:
                  scale = max_dim / max(h, w)
                  new_w = int(w * scale)
@@ -121,12 +150,10 @@ class SeamlessProcessor:
             img = self._original_image.copy()
         
         # Choose method
-        if self.method == 'overlap':
-            result = self._process_overlap(img)
-        elif self.method == 'splat':
+        if self.method == 'splat':
             result = self._process_splat(img)
-        else:
-            result = self._process_standard(img)
+        else:  # overlap (default)
+            result = self._process_overlap(img)
         
         # Cache preview results
         if preview and self._image_hash:
@@ -139,10 +166,6 @@ class SeamlessProcessor:
         """Get current parameters for cache key."""
         return {
             'method': self.method,
-            'blend_strength': round(self.blend_strength, 3),
-            'seam_smoothness': round(self.seam_smoothness, 3),
-            'detail_preservation': round(self.detail_preservation, 3),
-            'symmetric_blending': int(self.symmetric_blending),
             'overlap_x': round(self.overlap_x, 3),
             'overlap_y': round(self.overlap_y, 3),
             'edge_falloff': round(self.edge_falloff, 3),
@@ -165,20 +188,45 @@ class SeamlessProcessor:
         return result
         
     def _process_splat(self, img):
-        """Process using Splat method."""
-        # Use random seed based on 'randomize' param
-        # New size logic: use same size as input for now
+        """Process using Splat method with patch caching."""
         h, w = img.shape[:2]
-        result = synthesis_splat(
+
+        # KEY OPTIMIZATION: Cache rotated patches.
+        # Only re-generate patches if appearance-affecting params change.
+        # Coordinate layout is re-computed each call (fast, vectorized).
+        cache_key = (
+            self._image_hash,
+            img.shape,
+            round(self.splat_scale, 2),
+            int(self.splat_rotation),
+            round(self.splat_random_rotation, 3),
+            round(self.edge_falloff, 3)
+        )
+
+        cached_batches = self._splat_cache.get(cache_key)
+
+        result, batches = synthesis_splat(
             img,
             new_size=(h, w),
-            grid_size=8, # Fixed grid for consistent density
-            scale=self.splat_scale, # Correctly pass scale
+            scale=self.splat_scale,
             rotation=self.splat_rotation,
             rand_rot=self.splat_random_rotation,
             wobble=self.splat_wobble,
-            falloff=self.edge_falloff
+            falloff=self.edge_falloff,
+            cached_batches=cached_batches
         )
+
+        # Store in cache if newly generated
+        if cached_batches is None:
+            self._splat_cache[cache_key] = batches
+            # Simple LRU eviction
+            if len(self._splat_cache) > 8:
+                try:
+                    first_key = next(iter(self._splat_cache))
+                    del self._splat_cache[first_key]
+                except (StopIteration, RuntimeError):
+                    pass
+
         self._processed_image = result
         return result
 
@@ -189,10 +237,15 @@ class SeamlessProcessor:
         # Step 1: Offset the image to bring seams to center
         offset = offset_image(img, 0.5, 0.5)
         
-        # Step 2: Calculate seam width based on image size and parameters
-        min_dim = min(h, w)
-        base_seam_width = max(10, min_dim // 20)
-        seam_width = int(base_seam_width * (0.5 + self.blend_strength * 0.5))
+        # Calculate blend width - LOCAL falloff only (max 10% of image)
+        # fixed_width is not used here, assuming blend_strength is the primary control
+        # Local falloff constraint: max 10% of image dimension
+        max_blend_width = min(h, w) // 10
+        blend_width = int(max_blend_width * self.blend_strength)
+        
+        # Seam width for inpainting (e.g., 30% of blend_width, or a fixed minimum)
+        # This ensures the inpainting region is smaller than the blend region
+        seam_width = max(1, int(blend_width * 0.3)) # 3% of image if blend_strength is 1.0
         
         # Step 3: Apply smart inpainting to remove seams
         # Optimization: Simplified inpaint for preview
@@ -205,31 +258,18 @@ class SeamlessProcessor:
             method='telea'
         )
         
-        # Step 4: Apply edge blending for smooth transitions
-        # JIT is ONLY for symmetric blending. For Soft Falloff (non-symmetric), use Gaussian.
-        if self.use_jit and self.symmetric_blending:
-            blended = blend_seams_fast(
-                inpainted,
-                blend_strength=self.blend_strength,
-                smoothness=self.seam_smoothness
-            )
-        elif self.symmetric_blending:
-            # Fallback legacy symmetric
-            blended = blend_seams(
-                inpainted,
-                blend_strength=self.blend_strength,
-                smoothness=self.seam_smoothness,
-                symmetric=True
-            )
-        else:
-            # Soft Falloff (Non-Symmetric) - Use Gaussian Blur method
-            # This restores the "Soft" effect user asked for
-            blended = blend_seams(
-                inpainted,
-                blend_strength=self.blend_strength,
-                smoothness=self.seam_smoothness,
-                symmetric=False
-            )
+        
+        # Color matching removed - narrow local falloff should be sufficient
+        
+        # Step 4: Apply edge blending (Always Non-Symmetric for best quality)
+        # Non-Symmetric blending with automatic width calculation
+        blended = blend_seams(
+            inpainted,
+            blend_strength=self.blend_strength,
+            smoothness=self.seam_smoothness,
+            symmetric=False,
+            original_image=offset
+        )
         
         # Step 5: Reverse the offset to restore original positioning
         result = reverse_offset(blended, 0.5, 0.5)
@@ -276,6 +316,64 @@ class SeamlessProcessor:
         # Clip and convert back to original dtype
         result = np.clip(proc_f, 0, 255).astype(original.dtype)
         return result
+    
+    def _match_inpaint_colors(self, inpainted, original, seam_width):
+        """
+        Match the color/brightness of inpainted seam areas to the surrounding original texture.
+        This eliminates visible bands caused by inpainting color mismatch.
+        """
+        h, w = inpainted.shape[:2]
+        result = inpainted.copy().astype(np.float32)
+        orig = original.astype(np.float32)
+        
+        # Create mask for the inpainted cross-shaped region
+        mask = np.zeros((h, w), dtype=np.uint8)
+        cx, cy = w // 2, h // 2
+        
+        # Horizontal seam
+        y_start = max(0, cy - seam_width)
+        y_end = min(h, cy + seam_width)
+        mask[y_start:y_end, :] = 255
+        
+        # Vertical seam
+        x_start = max(0, cx - seam_width)
+        x_end = min(w, cx + seam_width)
+        mask[:, x_start:x_end] = 255
+        
+        # For each color channel, match histogram of inpainted area to original
+        if len(result.shape) == 3:
+            for c in range(result.shape[2]):
+                # Get pixels in seam area
+                seam_pixels = result[:, :, c][mask > 0]
+                orig_pixels = orig[:, :, c][mask == 0]  # Sample from NON-seam area
+                
+                if len(seam_pixels) > 0 and len(orig_pixels) > 100:
+                    # Calculate statistics
+                    seam_mean = np.mean(seam_pixels)
+                    seam_std = np.std(seam_pixels)
+                    orig_mean = np.mean(orig_pixels)
+                    orig_std = np.std(orig_pixels)
+                    
+                    # Color correct the seam area to match original
+                    if seam_std > 0:
+                        normalized = (result[:, :, c] - seam_mean) / seam_std
+                        result[:, :, c] = normalized * orig_std + orig_mean
+        else:
+            # Grayscale
+            seam_pixels = result[mask > 0]
+            orig_pixels = orig[mask == 0]
+            
+            if len(seam_pixels) > 0 and len(orig_pixels) > 100:
+                seam_mean = np.mean(seam_pixels)
+                seam_std = np.std(seam_pixels)
+                orig_mean = np.mean(orig_pixels)
+                orig_std = np.std(orig_pixels)
+                
+                if seam_std > 0:
+                    normalized = (result - seam_mean) / seam_std
+                    result = normalized * orig_std + orig_mean
+        
+        return np.clip(result, 0, 255).astype(inpainted.dtype)
     
     def get_preview(self, max_size=1024):
         """
