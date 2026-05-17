@@ -74,7 +74,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='SeamlessTextureMaker',
+    name='SEAMS',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

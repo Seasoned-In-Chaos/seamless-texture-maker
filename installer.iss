@@ -1,7 +1,7 @@
 #define MyAppName "Seamless Texture Maker"
 #define MyAppVersion "2.0.0"
 #define MyAppPublisher "Shubham Panchasara"
-#define MyAppExeName "SeamlessTextureMaker.exe"
+#define MyAppExeName "SEAMS.exe"
 
 [Setup]
 ; NOTE: The value of AppId uniquely identifies this application.
@@ -22,6 +22,9 @@ SolidCompression=yes
 ArchitecturesInstallIn64BitMode=x64
 UninstallDisplayIcon={app}\icon.ico
 SetupLogging=yes
+
+[InstallDelete]
+Type: files; Name: "{app}\SeamlessTextureMaker.exe"
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
