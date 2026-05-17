@@ -1301,12 +1301,21 @@ class MainWindow(QMainWindow):
 
     def _setup_shortcuts(self):
         QShortcut(QKeySequence("Ctrl+O"), self).activated.connect(self._open_file)
-        QShortcut(QKeySequence("Ctrl+S"), self).activated.connect(self._quick_export)
-        QShortcut(QKeySequence("Ctrl+Z"), self).activated.connect(self._undo)
-        QShortcut(QKeySequence("Ctrl+Y"), self).activated.connect(self._redo)
+        QShortcut(QKeySequence("Ctrl+S"), self).activated.connect(self._save_file)
+        QShortcut(QKeySequence("Ctrl+Shift+S"), self).activated.connect(self._save_file_as)
+        QShortcut(QKeySequence("Ctrl+E"), self).activated.connect(self._export_normal_map)
+        QShortcut(QKeySequence("Ctrl+Shift+E"), self).activated.connect(self._pbr_export_system)
+        QShortcut(QKeySequence("Alt+F4"), self).activated.connect(self.close)
+        
         QShortcut(QKeySequence("1"), self).activated.connect(lambda: self._on_nav_changed("delight"))
         QShortcut(QKeySequence("2"), self).activated.connect(lambda: self._on_nav_changed("seamless"))
         QShortcut(QKeySequence("3"), self).activated.connect(lambda: self._on_nav_changed("material"))
+        QShortcut(QKeySequence("Ctrl+0"), self).activated.connect(self.image_viewer.fit_to_view)
+        
+        QShortcut(QKeySequence("Ctrl+Z"), self).activated.connect(self._undo)
+        QShortcut(QKeySequence("Ctrl+Y"), self).activated.connect(self._redo)
+        QShortcut(QKeySequence("F1"), self).activated.connect(self._show_shortcuts)
+
 
     def _setup_status_bar(self):
         native_sb = QStatusBar()
