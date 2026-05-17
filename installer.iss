@@ -1,6 +1,6 @@
 #define MyAppName "Seamless Texture Maker"
 #define MyAppVersion "2.0.0"
-#define MyAppPublisher "SEAMS Studio"
+#define MyAppPublisher "Shubham Panchasara"
 #define MyAppExeName "SeamlessTextureMaker.exe"
 
 [Setup]
