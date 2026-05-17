@@ -2,36 +2,32 @@
 
 A powerful, GPU-accelerated desktop application for creating perfectly seamless textures for 3D workflows. Built with Python, PyQt6, and OpenCV with CUDA support.
 
-![Version](https://img.shields.io/badge/version-1.0.0-blue)
+![Version](https://img.shields.io/badge/version-2.0.0-blue)
 ![Python](https://img.shields.io/badge/python-3.8+-green)
 ![License](https://img.shields.io/badge/license-MIT-orange)
 
-## ✨ Features
+## ✨ Features (New in v2.0)
 
-### 🎨 Multiple Processing Techniques
+### 🎨 Seamless Texture Generation & Delighting
+- **Delighting Algorithm** - Remove directional light and shadows from photos to create flat base colors.
+- **Standard Method** - Offset + Inpaint with edge blending.
+- **Overlap Technique** - Tile overlap with smooth falloff.
+- **Splat Technique** - Texture bombing for organic patterns.
 
-- **Standard Method** - Offset + Inpaint with edge blending
-- **Overlap Technique** - Tile overlap with smooth falloff
-- **Splat Technique** - Texture bombing for organic patterns
+### 🔮 PBR Material Studio
+- **Full PBR Map Generation** - Automatically derive Normal, Roughness, Metallic, AO, Height, and Displacement maps from a single image.
+- **Material Lab Controls** - Tweak intensity, blur, and contrast for each PBR channel in real-time.
 
-### ⚡ Real-Time Live Preview
+### 🌐 3D Viewport & Preview
+- **Real-Time 3D Preview** - View your seamless PBR material on 3D meshes (Sphere, Cube, Plane).
+- **HDRI Lighting** - Test your materials in various lighting environments (Studio, Outdoor, Archviz).
+- **Live Tiling & Displacement** - Visualize tessellation and displacement directly in the 3D viewport.
+- **Workspace Modes** - Toggle between "Classic Mode" (2D) and "Studio Mode" (split 2D/3D workspace).
 
-- **Instant slider updates** - 50ms response time (~20fps)
-- **Background processing** - Non-blocking UI
-- **Dual-resolution system** - Fast preview + high-quality export
-
-### 🚀 Performance Optimizations
-
-- **GPU Acceleration** - CUDA-optimized operations
-- **Vectorized CPU operations** - NumPy-based processing
-- **Smart caching** - Preview resolution optimization
-- **Multi-threaded** - Background processing threads
-
-### 🎯 Quality Enhancements
-
-- **Distance-based edge falloff** - No blur, preserves details
-- **Smoothstep interpolation** - Smooth gradients
-- **Detail preservation** - Maintains texture sharpness
+### 🚀 Performance & Export Pipelines
+- **Renderer-Specific Export** - One-click export for Unreal Engine 5 (ORM packing), Blender (Node setup), V-Ray, and Corona (MaxScript generation).
+- **GPU Acceleration** - CUDA-optimized operations and Numba JIT compilation for heavy map generation.
+- **Multi-threaded Architecture** - Background processing keeps the UI fully responsive.
 
 ## 📸 Screenshots
 
@@ -58,77 +54,46 @@ pip install -r requirements.txt
 python main.py
 ```
 
-### Dependencies
-
-```
-PyQt6>=6.4.0
-opencv-python>=4.7.0
-numpy>=1.24.0
-Pillow>=9.5.0
-```
-
 ## 🎮 Usage
 
 ### Quick Start
 
-1. **Load Image** - Drag & drop or use File → Open
-2. **Choose Technique** - Standard, Overlap, or Splat
-3. **Adjust Parameters** - Use sliders for real-time preview
-4. **Export** - Save seamless texture
+1. **Load Image** - Drag & drop an image or use File → Open.
+2. **Delight** - (Optional) Use the Delight tab to remove uneven lighting.
+3. **Seamless** - Make the texture tileable using Standard, Overlap, or Splat modes.
+4. **Material Lab** - Generate and tweak PBR maps (Normal, Roughness, AO, etc.).
+5. **Studio Mode** - Switch to Studio Mode to preview your material on a 3D mesh.
+6. **Export** - Use `Ctrl+Shift+E` to export the full PBR package for your target renderer.
 
 ### Keyboard Shortcuts
 
 - `Ctrl+O` - Open image
-- `Ctrl+S` - Save texture
-- `Ctrl+0` - Fit to view
-
-### Parameter Guide
-
-#### Standard Method
-- **Edge Blend** (0-100%) - Width of seam blending zone
-- **Detail Preservation** (0-100%) - Controls inpainting quality
-
-#### Overlap Technique
-- **Overlap X/Y** (0-50%) - Amount of tile overlap
-- **Edge Falloff** (0-100%) - Softness of blending
-
-#### Splat Technique
-- **Edge Falloff** (0-100%) - Splat edge smoothness
-- **Splat Scale** (1-5x) - Size multiplier
-- **Rotation** (0-360°) - Base rotation angle
-- **Random Rotation** (0-100%) - Rotation variation
-- **Wobble** (0-100%) - Position randomness
+- `Ctrl+S` - Save current map
+- `Ctrl+Shift+E` - Export PBR Pipeline
+- `1 / 2 / 3` - Switch between Delight, Seamless, and Material Lab modes.
+- `F1` - Show Shortcuts
+- `Escape` - Exit Fullscreen Mode
 
 ## 🏗️ Architecture
 
 ### Core Modules
 
-```
+```text
 seamless-texture-maker/
 ├── app/
 │   ├── core/              # Processing algorithms
-│   │   ├── seamless.py    # Main processor
-│   │   ├── edge_blending.py    # Distance-based falloff
-│   │   ├── materialize_methods.py  # Overlap & Splat
-│   │   ├── inpainting.py  # Seam filling
-│   │   ├── gpu_utils.py   # CUDA acceleration
-│   │   └── offset_mapping.py   # Image offsetting
+│   │   ├── seamless.py    # Main seamless processor
+│   │   ├── delighting.py  # Delighting algorithm
+│   │   ├── normal_generator.py # PBR Map generation
+│   │   └── gpu_utils.py   # CUDA/Numba acceleration
 │   ├── gui/               # User interface
 │   │   ├── main_window.py # Main application window
-│   │   ├── controls.py    # Parameter controls
-│   │   ├── image_viewer.py    # Split-view display
-│   │   └── styles.py      # Dark theme
+│   │   ├── image_viewer.py# 2D Viewport & Workspace Splitter
+│   │   ├── pbr_viewport.py# OpenGL 3D Viewport
+│   │   └── styles.py      # Premium dark theme
 │   └── utils/             # Utilities
-│       ├── image_io.py    # Image loading/saving
-│       └── config.py      # App configuration
 ├── main.py                # Entry point
-└── requirements.txt       # Dependencies
-```
-
-### Processing Pipeline
-
-```
-Load Image → Offset to Center → Process Seams → Blend Edges → Reverse Offset → Export
+└── build.bat              # PyInstaller build script
 ```
 
 ## 🔧 Technical Details
