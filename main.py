@@ -27,7 +27,14 @@ def get_icon_path():
     return None
 
 
+_app_mutex = None
+
 def main():
+    global _app_mutex
+    if sys.platform == 'win32':
+        import ctypes
+        _app_mutex = ctypes.windll.kernel32.CreateMutexW(None, True, "SeamlessTextureMaker_Mutex_DA6FB758")
+
     logger = setup_logging()
     install_exception_hook()
     logger.info("Starting %s", APP_NAME)

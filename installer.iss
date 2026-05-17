@@ -10,6 +10,7 @@ AppId={{DA6FB758-C976-4700-ADC3-6B1DF8D279E4}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
+AppMutex=SeamlessTextureMaker_Mutex_DA6FB758
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
