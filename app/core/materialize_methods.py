@@ -150,13 +150,33 @@ def synthesis_splat(image, new_size=(1024, 1024),
     target_h, target_w = new_size
     h, w = image.shape[:2]
 
-    # 1. Initialize canvas with mean color
-    mean_color = cv2.mean(image)[:3] if len(image.shape) == 3 else cv2.mean(image)[0]
-
-    if len(image.shape) == 3:
-        canvas = np.full((target_h, target_w, 3), mean_color, dtype=np.float32)
-    else:
-        canvas = np.full((target_h, target_w), mean_color, dtype=np.float32)
+    # 1. Initialize canvas from a tiled, quarter-offset source image.
+    # This eliminates seam lines at uncovered pixels — every pixel starts
+    # with real texture content rather than a flat mean-color block.
+    img_f = image.astype(np.float32)
+    if len(img_f.shape) == 2:
+        img_f = img_f[:, :, np.newaxis]  # treat grayscale as 1-channel
+    h_src, w_src = img_f.shape[:2]
+    # Create a 2x2 tile of the source, then crop to target size with a quarter offset
+    tiled_2x = np.tile(img_f, (2, 2, 1))
+    # Quarter-offset so the "seam" of the tile is in the middle, not at the corners
+    qx = w_src // 4
+    qy = h_src // 4
+    # Crop target_h x target_w starting at the quarter offset (wrapping via tile)
+    crop_y = qy % h_src
+    crop_x = qx % w_src
+    # The 2x tile is always large enough for a quarter-offset crop
+    canvas = tiled_2x[crop_y:crop_y + target_h, crop_x:crop_x + target_w].copy()
+    if canvas.shape[0] < target_h or canvas.shape[1] < target_w:
+        # Fallback: repeat-pad if crop exceeded the 2x tile
+        canvas = np.tile(img_f, (
+            (target_h // h_src) + 2,
+            (target_w // w_src) + 2,
+            1
+        ))[:target_h, :target_w].copy()
+    # Restore original channel count for grayscale
+    if len(image.shape) == 2:
+        canvas = canvas[:, :, 0]
 
     # 2. Prepare Patches (Use Cache if available)
     if cached_batches is not None:

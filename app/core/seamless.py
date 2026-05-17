@@ -10,6 +10,7 @@ from .edge_blending import blend_seams, create_blend_mask
 from .edge_blending_jit import blend_seams_fast
 from .materialize_methods import synthesis_overlap, synthesis_splat
 from .inpainting import smart_seam_inpaint
+from .delighting import delight_image
 from .gpu_utils import GPUAccelerator, is_cuda_available
 from .cache import ResultCache, hash_image
 
@@ -23,6 +24,7 @@ class SeamlessProcessor:
         self._original_image = None
         self._preview_image = None
         self._processed_image = None
+        self._delighted_image = None
         self._image_hash = None
         
         # Performance optimizations
@@ -49,6 +51,10 @@ class SeamlessProcessor:
         self.splat_random_rotation = 0
         self.splat_wobble = 0.2
         self.splat_randomize = 0
+
+        # Delighting/Flattening params
+        self.delight_strength = 0.0
+        self.flatness = 0.0
     
     def set_parameters(self, **kwargs):
         """Update processing parameters."""
@@ -78,6 +84,11 @@ class SeamlessProcessor:
             if 'randomize' in sp: self.splat_randomize = sp['randomize']
             if 'falloff' in sp: self.edge_falloff = sp['falloff']
 
+        if 'preprocessing' in kwargs:
+            pre = kwargs['preprocessing']
+            if 'delight' in pre: self.delight_strength = pre['delight']
+            if 'flatness' in pre: self.flatness = pre['flatness']
+
         # Handle old saved 'standard' method: fall back to 'overlap'
         if self.method == 'standard':
             self.method = 'overlap'
@@ -95,6 +106,7 @@ class SeamlessProcessor:
             self._original_image = image.copy()
         
         self._processed_image = None
+        self._delighted_image = None
         self._splat_cache = {} # Clear patch cache
 
         # Cache preview image for live updates (smaller for maximum speed)
@@ -103,7 +115,7 @@ class SeamlessProcessor:
              self._image_hash = hash_image(self._original_image)
              
              h, w = self._original_image.shape[:2]
-             max_dim = 200  # Very small for ultra-fast splat previews
+             max_dim = 600  # Higher resolution for sharper live previews
              if max(h, w) > max_dim:
                  scale = max_dim / max(h, w)
                  new_w = int(w * scale)
@@ -149,6 +161,13 @@ class SeamlessProcessor:
         else:
             img = self._original_image.copy()
         
+        # Apply delighting/flattening
+        if self.delight_strength > 0 or self.flatness > 0:
+            img = delight_image(img, strength=self.delight_strength, flatness=self.flatness)
+        
+        # Store for UI display
+        self._delighted_image = img.copy()
+        
         # Choose method
         if self.method == 'splat':
             result = self._process_splat(img)
@@ -173,7 +192,9 @@ class SeamlessProcessor:
             'splat_rotation': int(self.splat_rotation),
             'splat_random_rotation': round(self.splat_random_rotation, 3),
             'splat_wobble': round(self.splat_wobble, 3),
-            'splat_randomize': int(self.splat_randomize)
+            'splat_randomize': int(self.splat_randomize),
+            'delight_strength': round(self.delight_strength, 3),
+            'flatness': round(self.flatness, 3)
         }
             
     def _process_overlap(self, img):
@@ -452,6 +473,14 @@ class SeamlessProcessor:
     @property
     def processed_image(self):
         return self._processed_image
+
+    def set_processed_image(self, image):
+        """Synchronize an externally processed image back into this processor."""
+        self._processed_image = None if image is None else image.copy()
+    
+    @property
+    def delighted_image(self):
+        return self._delighted_image
     
     @property
     def gpu_available(self):

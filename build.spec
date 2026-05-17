@@ -88,5 +88,5 @@ exe = EXE(
     codesign_identity=None,
     entitlements_file=None,
     icon='resources/icon.ico',
-    version_info=None,
+    version='version_info.txt',
 )

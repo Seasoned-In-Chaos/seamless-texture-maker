@@ -4,11 +4,16 @@ Application configuration and settings.
 import os
 import json
 
+from .app_logging import get_logger, log_exception, user_data_dir
+
+
+logger = get_logger(__name__)
+
 
 # Application info
-APP_NAME = "Seamless Texture Maker"
-APP_VERSION = "1.0"
-APP_AUTHOR = "Studio Tools"
+APP_NAME = "seams"
+APP_VERSION = "2.0.0"
+APP_AUTHOR = "Shubham Panchasara"
 
 # Default settings
 DEFAULT_SETTINGS = {
@@ -19,6 +24,10 @@ DEFAULT_SETTINGS = {
     'export_format': 'png',
     'save_mode': 'new_file',  # 'new_file' or 'overwrite'
     'last_directory': '',
+    'last_file': '',
+    'recent_files': [],
+    'active_tool': 'home',
+    'preview_tab': 0,
     'window_width': 1200,
     'window_height': 800,
 }
@@ -26,10 +35,7 @@ DEFAULT_SETTINGS = {
 
 def get_config_path():
     """Get path to config file."""
-    app_data = os.environ.get('APPDATA', os.path.expanduser('~'))
-    config_dir = os.path.join(app_data, 'SeamlessTextureMaker')
-    os.makedirs(config_dir, exist_ok=True)
-    return os.path.join(config_dir, 'settings.json')
+    return os.path.join(user_data_dir(), 'settings.json')
 
 
 def load_settings():
@@ -44,8 +50,8 @@ def load_settings():
                 settings = DEFAULT_SETTINGS.copy()
                 settings.update(saved)
                 return settings
-        except Exception:
-            pass
+        except Exception as exc:
+            log_exception(logger, f"Failed to load settings from {config_path}", exc)
     
     return DEFAULT_SETTINGS.copy()
 
@@ -55,8 +61,11 @@ def save_settings(settings):
     config_path = get_config_path()
     
     try:
-        with open(config_path, 'w') as f:
+        tmp_path = f"{config_path}.tmp"
+        with open(tmp_path, 'w') as f:
             json.dump(settings, f, indent=2)
+        os.replace(tmp_path, config_path)
         return True
-    except Exception:
+    except Exception as exc:
+        log_exception(logger, f"Failed to save settings to {config_path}", exc)
         return False

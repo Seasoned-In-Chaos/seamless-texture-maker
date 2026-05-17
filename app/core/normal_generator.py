@@ -1,262 +1,166 @@
 """
-Normal and Bump Map Generator - Refactored Pipeline
-Implements proper frequency separation and Photoshop-quality behavior.
+Material map generation controls - PBR Pipeline
 """
 import cv2
 import numpy as np
 from numba import jit
 
-# ============================================================================
-# FREQUENCY SEPARATION
-# ============================================================================
-
-def separate_frequencies(height_map, sigma=10.0):
-    """
-    Separate height map into low and high frequency components.
-    Uses bilateral filter for edge-aware separation.
-    """
-    # Low frequency: bilateral filter preserves edges
-    low_freq = cv2.bilateralFilter(
-        (height_map * 255).astype(np.uint8),
-        d=0,
-        sigmaColor=50,
-        sigmaSpace=sigma
-    ).astype(np.float32) / 255.0
-    
-    # High frequency: residual detail
-    high_freq = height_map - low_freq
-    
-    return low_freq, high_freq
-
-
-def recombine_frequencies(low_freq, high_freq, detail_scale=1.0):
-    """
-    Recombine frequency components with detail scale control.
-    detail_scale: 0 = pure low freq, 1 = full detail
-    """
-    return low_freq + (high_freq * detail_scale)
-
-
-# ============================================================================
-# EDGE-AWARE SMOOTHING
-# ============================================================================
-
-def edge_aware_smooth(image, smoothness=0.0):
-    """
-    Apply edge-aware smoothing using bilateral filter.
-    smoothness: 0 = no smoothing, 1 = maximum smoothing
-    """
-    if smoothness < 0.01:
-        return image
-    
-    # Scale smoothness to bilateral filter parameters
-    sigma_color = 20 + (smoothness * 80)  # 20-100
-    sigma_space = 2 + (smoothness * 18)    # 2-20
-    
-    smoothed = cv2.bilateralFilter(
-        (image * 255).astype(np.uint8),
-        d=0,
-        sigmaColor=sigma_color,
-        sigmaSpace=sigma_space
-    ).astype(np.float32) / 255.0
-    
-    return smoothed
-
-
-# ============================================================================
-# HEIGHT MAP GENERATION
-# ============================================================================
-
-def generate_height_map(image, invert=False, contrast_mode='balanced'):
-    """
-    Generate true height map from image using luminance conversion
-    and automatic contrast normalization.
-    """
-    # 1. Luminance conversion (proper perceptual weighting)
-    if len(image.shape) == 3:
-        # Use ITU-R BT.709 luma coefficients
-        height = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY).astype(np.float32) / 255.0
-    else:
-        height = image.astype(np.float32) / 255.0
-    
-    # 2. Invert Height (EARLY - before processing)
-    # Applied to raw height data to ensure physical surface inversion
-    if invert:
-        height = 1.0 - height
-
-    # 3. Auto contrast normalization
-    height = apply_contrast(height, contrast_mode)
-    
-    # 4. Midtone emphasis for better depth perception
-    # Apply a subtle S-curve
-    height = apply_midtone_emphasis(height)
-    
-    return height
-
-
-def apply_midtone_emphasis(height):
-    """
-    Apply subtle S-curve for better midtone contrast.
-    """
-    # Simple power curve that emphasizes midtones
-    # Values near 0.5 get more contrast
-    return np.power(height, 0.9)
-
-
-def apply_contrast(height, mode):
-    """Apply contrast adjustment to height map."""
-    if mode == 'soft':
-        return (height - 0.5) * 0.7 + 0.5
-    elif mode == 'sharp':
-        return np.clip((height - 0.5) * 1.5 + 0.5, 0, 1)
-    elif mode == 'auto':
-        # Auto levels (normalize)
-        min_val = np.min(height)
-        max_val = np.max(height)
-        if max_val > min_val:
-            return (height - min_val) / (max_val - min_val)
-        return height
-    return height  # balanced/default
-
-
-# ============================================================================
-# GRADIENT COMPUTATION (JIT OPTIMIZED)
-# ============================================================================
+from .ao_generator import generate_ao_map
 
 @jit(nopython=True, fastmath=True)
 def compute_gradients_jit(height_map, strength=1.0):
-    """
-    Compute gradients from height map with wrap-around sampling.
-    Returns unnormalized gradient vectors.
-    """
     h, w = height_map.shape
     gradients = np.zeros((h, w, 2), dtype=np.float32)
-    
     for y in range(h):
         for x in range(w):
-            # Wrap-around sampling for seamlessness
             prev_x = height_map[y, (x - 1 + w) % w]
             next_x = height_map[y, (x + 1) % w]
             prev_y = height_map[(y - 1 + h) % h, x]
             next_y = height_map[(y + 1) % h, x]
-            
-            # Central difference
             dx = (next_x - prev_x) * strength
             dy = (next_y - prev_y) * strength
-            
             gradients[y, x, 0] = dx
             gradients[y, x, 1] = dy
-    
     return gradients
-
 
 @jit(nopython=True, fastmath=True)
 def gradients_to_normals_jit(gradients, invert_y=False):
-    """
-    Convert gradient vectors to normalized normal vectors.
-    """
     h, w = gradients.shape[:2]
     normals = np.zeros((h, w, 3), dtype=np.float32)
-    
     for y in range(h):
         for x in range(w):
             dx = gradients[y, x, 0]
             dy = gradients[y, x, 1]
-            
-            if invert_y:
-                dy = -dy
-            
-            # Normal vector
-            nx = -dx
-            ny = -dy
-            nz = 1.0
-            
-            # Normalize
+            if invert_y: dy = -dy
+            nx = -dx; ny = -dy; nz = 1.0
             mag = np.sqrt(nx*nx + ny*ny + nz*nz)
             normals[y, x, 0] = nx / mag
             normals[y, x, 1] = ny / mag
             normals[y, x, 2] = nz / mag
-    
     return normals
 
-
-# ============================================================================
-# MAIN GENERATOR CLASS
-# ============================================================================
-
 class NormalGenerator:
-    """Orchestrates normal and bump map generation."""
-    
     @staticmethod
-    def process(image, intensity=1.0, detail_scale=1.0, smoothness=0.0,
-                invert_height=False, format='opengl', contrast_mode='balanced',
-                map_type='normal', height_intensity=1.0):
-        """
-        Generate normal map or bump map with proper frequency separation.
+    def process(image, **params):
+        """Processes and returns a specific PBR map based on parameters."""
+        if len(image.shape) == 3:
+            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY).astype(np.float32) / 255.0
+        else:
+            gray = image.astype(np.float32) / 255.0
+
+        def apply_contrast(src, mode):
+            mode = (mode or "balanced").lower()
+            out = src.astype(np.float32)
+            if mode == "auto":
+                lo, hi = np.percentile(out, (2.0, 98.0))
+                if hi > lo:
+                    out = (out - lo) / (hi - lo)
+            elif mode == "soft":
+                out = 0.5 + (out - 0.5) * 0.65
+            elif mode == "sharp":
+                out = 0.5 + (out - 0.5) * 1.65
+            return np.clip(out, 0.0, 1.0)
+
+        # Determine which map we are currently adjusting (based on params from MaterialControlPanel)
+        # This is a bit tricky because the panel sends ALL params at once.
+        # We'll generate all maps and return a dict or just handle them individually.
         
-        Pipeline:
-        1. Generate base height map (with optional inversion)
-        2. Separate into low/high frequencies
-        3. Apply edge-aware smoothing to low freq
-        4. Recombine with detail scale
-        5a. Bump mode: Output pure height field (true height-field representation)
-        5b. Normal mode: Compute gradients, scale by intensity, normalize
+        # 1. NORMAL
+        ni = params.get("normal_intensity", 0.5) * 5.0
+        ns = params.get("normal_smooth", 0.3)
+        nd = params.get("normal_detail", 0.4)
         
-        Args:
-            intensity: Controls both gradient strength (Normal) and height scale (Bump)
-            height_intensity: Unused (kept for API compatibility)
+        normal_height = 1.0 - gray if params.get("normal_invert_height") else gray
+        normal_height = apply_contrast(normal_height, params.get("normal_contrast", "balanced"))
         
-        Note: Both modes output from the SAME height field for consistency.
-              Inversion is applied at height-field level, before processing.
-        """
-        # Step 1: Generate base height map
-        height = generate_height_map(image, invert_height, contrast_mode)
+        # Simple height for normal
+        h_map = cv2.GaussianBlur(normal_height, (0, 0), sigmaX=0.15 + ns * 10.0)
+        h_map = gray + (gray - h_map) * nd
+        h_map = np.clip(h_map, 0, 1)
         
-        # Step 2: Frequency separation
-        low_freq, high_freq = separate_frequencies(height, sigma=10.0)
-        
-        # Step 3: Edge-aware smoothing on LOW frequency only
-        low_freq_smoothed = edge_aware_smooth(low_freq, smoothness)
-        
-        # Step 4: Recombine with detail scale control
-        final_height = recombine_frequencies(low_freq_smoothed, high_freq, detail_scale)
-        
-        # Clamp to valid range
-        final_height = np.clip(final_height, 0, 1)
-        
-        # BUMP MAP MODE: Output height field with intensity scaling
-        if map_type == 'bump':
-            # Apply intensity (shared slider)
-            # Use intensity arg, treating 1.0 as neutral (no change)
-            # intensity < 1.0: compress height
-            # intensity > 1.0: exaggerate height
-            adjusted_height = 0.5 + (final_height - 0.5) * intensity
-            adjusted_height = np.clip(adjusted_height, 0, 1)
-            
-            h, w = adjusted_height.shape
-            bump_map = np.zeros((h, w, 3), dtype=np.uint8)
-            gray_uint8 = (adjusted_height * 255).astype(np.uint8)
-            bump_map[..., 0] = gray_uint8
-            bump_map[..., 1] = gray_uint8
-            bump_map[..., 2] = gray_uint8
-            return bump_map, None
-        
-        # NORMAL MAP MODE: Continue with gradient computation
-        
-        # Step 5: Compute gradients (wrap-around for seamlessness)
-        # Intensity is applied HERE, not to height map
-        gradient_strength = intensity * 3.0  # Scale for visibility
-        gradients = compute_gradients_jit(final_height, gradient_strength)
-        
-        # Step 6: Convert gradients to normalized normals
-        invert_y = (format.lower() == 'directx')
-        normals_raw = gradients_to_normals_jit(gradients, invert_y)
-        
-        # Step 7: Pack into BGR image
-        h, w = final_height.shape
-        normal_map = np.zeros((h, w, 3), dtype=np.uint8)
-        normal_map[..., 0] = np.clip((normals_raw[..., 2] * 0.5 + 0.5) * 255, 0, 255).astype(np.uint8)  # B = Z
-        normal_map[..., 1] = np.clip((normals_raw[..., 1] * 0.5 + 0.5) * 255, 0, 255).astype(np.uint8)  # G = Y
-        normal_map[..., 2] = np.clip((normals_raw[..., 0] * 0.5 + 0.5) * 255, 0, 255).astype(np.uint8)  # R = X
-        
-        return normal_map, normals_raw
+        grads = compute_gradients_jit(h_map, ni)
+        normals_raw = gradients_to_normals_jit(grads, params.get("normal_format") == "directx")
+        if params.get("normal_map_type") == "bump":
+            normal_img = cv2.cvtColor((h_map * 255).astype(np.uint8), cv2.COLOR_GRAY2BGR)
+        else:
+            normal_img = np.zeros((h_map.shape[0], h_map.shape[1], 3), dtype=np.uint8)
+            normal_img[..., 0] = np.clip((normals_raw[..., 2] * 0.5 + 0.5) * 255, 0, 255)
+            normal_img[..., 1] = np.clip((normals_raw[..., 1] * 0.5 + 0.5) * 255, 0, 255)
+            normal_img[..., 2] = np.clip((normals_raw[..., 0] * 0.5 + 0.5) * 255, 0, 255)
+
+        # 2. ROUGHNESS
+        ri = params.get("rough_intensity", 0.5)
+        rc = params.get("rough_contrast", 0.0)
+        rough = gray.copy()
+        if params.get("rough_invert"): rough = 1.0 - rough
+        rough = np.clip(0.5 + (rough - 0.5) * (1.0 + rc * 2.0), 0, 1)
+        rough = np.clip(rough * (ri * 2.0), 0, 1)
+        rough_img = cv2.cvtColor((rough * 255).astype(np.uint8), cv2.COLOR_GRAY2BGR)
+
+        # 3. METALLIC
+        mi = params.get("metal_intensity", 0.0)
+        me = params.get("metal_edge", 0.2)
+        metal = np.zeros_like(gray)
+        if mi > 0:
+            metal = np.clip(gray * (mi * 2.0), 0, 1)
+            if me > 0:
+                sigma = 0.35 + me * 8.0
+                metal = cv2.GaussianBlur(metal, (0, 0), sigmaX=sigma)
+                metal = np.clip(metal, 0, 1)
+        metal_img = cv2.cvtColor((metal * 255).astype(np.uint8), cv2.COLOR_GRAY2BGR)
+
+        # 4. AO
+        ai = params.get("ao_intensity", 0.5)
+        aspread = params.get("ao_spread", 0.3)
+        ao_source = gray
+        if aspread > 0:
+            ao_source = cv2.GaussianBlur(gray, (0, 0), sigmaX=0.75 + aspread * 14.0)
+        ao = 1.0 - (ao_source * ai)
+        ao_img = cv2.cvtColor((ao * 255).astype(np.uint8), cv2.COLOR_GRAY2BGR)
+
+        # 5. HEIGHT
+        hi = params.get("height_depth", 0.5)
+        hs = params.get("height_smooth", 0.1)
+        height_source = 1.0 - gray if params.get("height_invert") else gray
+        height_source = apply_contrast(height_source, params.get("height_contrast", "balanced"))
+        if hs > 0:
+            height_source = cv2.GaussianBlur(height_source, (0, 0), sigmaX=0.35 + hs * 10.0)
+        height = np.clip(height_source * (hi * 2.0), 0, 1)
+        height_img = cv2.cvtColor((height * 255).astype(np.uint8), cv2.COLOR_GRAY2BGR)
+        displacement_strength = params.get("displacement_strength", 0.2)
+        displacement = np.clip(height * (0.25 + displacement_strength * 1.75), 0, 1)
+        displacement_img = cv2.cvtColor((displacement * 255).astype(np.uint8), cv2.COLOR_GRAY2BGR)
+
+        # 6. OPACITY
+        ot = params.get("alpha_threshold", 1.0)
+        aso = params.get("alpha_softness", 0.0)
+        threshold = 1.0 - ot
+        if aso > 0:
+            width = max(0.01, aso * 0.45)
+            opacity = np.clip((gray - threshold + width * 0.5) / width, 0.0, 1.0).astype(np.float32)
+        else:
+            opacity = np.where(gray > threshold, 1.0, 0.0).astype(np.float32)
+        opacity_img = cv2.cvtColor((opacity * 255).astype(np.uint8), cv2.COLOR_GRAY2BGR)
+
+        # 7. EMISSIVE
+        ei = params.get("glow_intensity", 0.0)
+        tint_name = params.get("glow_tint", "white")
+        tint_bgr = {
+            "white": np.array([1.0, 1.0, 1.0], dtype=np.float32),
+            "warm": np.array([0.55, 0.82, 1.0], dtype=np.float32),
+            "cool": np.array([1.0, 0.78, 0.48], dtype=np.float32),
+            "custom": np.array([0.95, 0.55, 1.0], dtype=np.float32),
+        }.get(tint_name, np.array([1.0, 1.0, 1.0], dtype=np.float32))
+        emissive = np.clip(gray * ei, 0, 1)
+        emissive_img = np.clip(emissive[..., None] * tint_bgr * 255.0, 0, 255).astype(np.uint8)
+
+        return {
+            "Normal": normal_img,
+            "Roughness": rough_img,
+            "Metallic": metal_img,
+            "AO": ao_img,
+            "Height": height_img,
+            "Displacement": displacement_img,
+            "Opacity": opacity_img,
+            "Emissive": emissive_img
+        }

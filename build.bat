@@ -28,7 +28,7 @@ for %%p in (
 if not defined PYTHON_EXE (
     echo [ERROR] Python not found! Please install Python 3.10+ and add it to PATH.
     echo Download from: https://www.python.org/downloads/
-    pause
+    :: pause
     exit /b 1
 )
 
@@ -41,7 +41,7 @@ echo [*] Installing dependencies...
 %PYTHON_EXE% -m pip install -r requirements.txt --quiet
 if errorlevel 1 (
     echo [ERROR] Failed to install dependencies!
-    pause
+    :: pause
     exit /b 1
 )
 echo [OK] Dependencies ready.
@@ -60,7 +60,7 @@ echo [*] Building EXE (this may take 2-5 minutes)...
 if errorlevel 1 (
     echo.
     echo [ERROR] Build failed! Check the output above for errors.
-    pause
+    :: pause
     exit /b 1
 )
 
@@ -71,6 +71,36 @@ echo  Output: dist\SeamlessTextureMaker.exe
 echo ========================================
 echo.
 
+:: Run Inno Setup Compiler
+echo [*] Building Windows Installer...
+set "ISCC_EXE="
+
+iscc /? >nul 2>&1
+if not errorlevel 1 set "ISCC_EXE=iscc"
+
+if not defined ISCC_EXE (
+    if exist "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" set "ISCC_EXE=C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+)
+if not defined ISCC_EXE (
+    if exist "C:\Program Files\Inno Setup 6\ISCC.exe" set "ISCC_EXE=C:\Program Files\Inno Setup 6\ISCC.exe"
+)
+if not defined ISCC_EXE (
+    if exist "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" set "ISCC_EXE=%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe"
+)
+
+if defined ISCC_EXE (
+    echo [OK] Found Inno Setup Compiler: %ISCC_EXE%
+    "%ISCC_EXE%" installer.iss
+    if errorlevel 1 (
+        echo [ERROR] Installer build failed!
+    ) else (
+        echo [OK] Installer successfully created in dist\ folder!
+    )
+) else (
+    echo [WARNING] Inno Setup Compiler (ISCC) not found. Skipping installer build.
+    echo Please install Inno Setup to automatically build the installer.
+)
+
 :: Open the dist folder
 explorer dist
-pause
+:: pause

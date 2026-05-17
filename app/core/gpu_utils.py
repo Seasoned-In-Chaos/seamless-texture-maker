@@ -4,13 +4,19 @@ GPU utility functions for detecting and utilizing GPU acceleration.
 import cv2
 import numpy as np
 
+from ..utils.app_logging import get_logger
+
+
+logger = get_logger(__name__)
+
 
 def is_cuda_available():
     """Check if CUDA is available through OpenCV."""
     try:
         count = cv2.cuda.getCudaEnabledDeviceCount()
         return count > 0
-    except Exception:
+    except Exception as exc:
+        logger.debug("CUDA availability check failed: %s", exc)
         return False
 
 
@@ -25,7 +31,8 @@ def get_gpu_info():
             'device_id': device,
             'name': f'CUDA Device {device}',
         }
-    except Exception:
+    except Exception as exc:
+        logger.debug("CUDA device info unavailable: %s", exc)
         return None
 
 
@@ -40,7 +47,8 @@ class GPUAccelerator:
         if self.use_gpu:
             try:
                 self._stream = cv2.cuda.Stream()
-            except Exception:
+            except Exception as exc:
+                logger.debug("CUDA stream unavailable, using CPU: %s", exc)
                 self.use_gpu = False
         return self
     
@@ -56,7 +64,8 @@ class GPUAccelerator:
                 gpu_mat = cv2.cuda_GpuMat()
                 gpu_mat.upload(img)
                 return gpu_mat
-            except Exception:
+            except Exception as exc:
+                logger.debug("CUDA upload failed, using CPU: %s", exc)
                 self.use_gpu = False
         return img
     
@@ -76,7 +85,8 @@ class GPUAccelerator:
                 )
                 gpu_result = gpu_filter.apply(gpu_img)
                 return self.download(gpu_result)
-            except Exception:
+            except Exception as exc:
+                logger.debug("CUDA Gaussian blur failed, using CPU: %s", exc)
                 self.use_gpu = False
         
         return cv2.GaussianBlur(img, ksize, sigma)
@@ -88,7 +98,8 @@ class GPUAccelerator:
                 gpu_img = self.upload(img)
                 gpu_result = cv2.cuda.resize(gpu_img, size, interpolation=interpolation)
                 return self.download(gpu_result)
-            except Exception:
+            except Exception as exc:
+                logger.debug("CUDA resize failed, using CPU: %s", exc)
                 self.use_gpu = False
         
         return cv2.resize(img, size, interpolation=interpolation)
@@ -119,7 +130,8 @@ class GPUAccelerator:
                 gpu_result = cv2.cuda.add(gpu_img1, gpu_scaled)
                 
                 return self.download(gpu_result)
-            except Exception:
+            except Exception as exc:
+                logger.debug("CUDA alpha blend failed, using CPU: %s", exc)
                 self.use_gpu = False
         
         # CPU fallback

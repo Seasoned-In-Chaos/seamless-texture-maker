@@ -1,61 +1,73 @@
-"""
-Seamless Texture Maker - Application Entry Point
-Create perfectly seamless textures for 3D workflows.
-"""
+"""SEAMS application entry point."""
 import sys
 import os
 
-# Add app directory to path
 app_dir = os.path.dirname(os.path.abspath(__file__))
 if app_dir not in sys.path:
     sys.path.insert(0, app_dir)
+os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")
 
-from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt
-from PyQt6.QtGui import QIcon
+from PyQt6.QtGui import QIcon, QSurfaceFormat
 
 from app.gui.main_window import MainWindow
+from app.gui.splash_screen import SplashScreen
 from app.utils.config import APP_NAME
+from app.utils.app_logging import LoggingApplication, install_exception_hook, setup_logging
 
 
 def get_icon_path():
-    """Get path to application icon."""
-    possible_paths = [
+    for path in [
         os.path.join(app_dir, 'resources', 'icon.ico'),
         os.path.join(app_dir, 'resources', 'icon.png'),
         os.path.join(app_dir, 'icon.ico'),
-    ]
-    
-    for path in possible_paths:
+    ]:
         if os.path.exists(path):
             return path
-    
     return None
 
 
 def main():
-    """Main entry point."""
-    # High DPI support
-    QApplication.setHighDpiScaleFactorRoundingPolicy(
+    logger = setup_logging()
+    install_exception_hook()
+    logger.info("Starting %s", APP_NAME)
+
+    LoggingApplication.setHighDpiScaleFactorRoundingPolicy(
         Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
     )
-    
-    # Create application
-    app = QApplication(sys.argv)
+    gl_format = QSurfaceFormat()
+    gl_format.setRenderableType(QSurfaceFormat.RenderableType.OpenGL)
+    gl_format.setProfile(QSurfaceFormat.OpenGLContextProfile.CompatibilityProfile)
+    gl_format.setVersion(2, 1)
+    gl_format.setSamples(4)
+    gl_format.setDepthBufferSize(24)
+    gl_format.setStencilBufferSize(8)
+    gl_format.setSwapInterval(1)
+    QSurfaceFormat.setDefaultFormat(gl_format)
+
+    app = LoggingApplication(sys.argv)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName("StudioTools")
-    
-    # Set application icon
+
     icon_path = get_icon_path()
     if icon_path:
         app.setWindowIcon(QIcon(icon_path))
-    
-    # Create and show main window
+
+    # ── Cinematic splash screen ──────────────────────────────────────────────
+    splash = SplashScreen()
+    splash.show()
+    app.processEvents()
+
+    # Pre-create main window in background while splash plays
     window = MainWindow()
     window.setAcceptDrops(True)
-    window.show()
-    
-    # Run application
+
+    def _on_splash_done():
+        splash.close()
+        window.show()
+
+    splash.finished.connect(_on_splash_done)
+
     sys.exit(app.exec())
 
 
