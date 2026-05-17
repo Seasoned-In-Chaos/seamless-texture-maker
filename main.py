@@ -34,6 +34,11 @@ def main():
     if sys.platform == 'win32':
         import ctypes
         _app_mutex = ctypes.windll.kernel32.CreateMutexW(None, True, "SeamlessTextureMaker_Mutex_DA6FB758")
+        try:
+            myappid = "SeasonedInChaos.SeamlessTextureMaker.v2"
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+        except Exception:
+            pass
 
     logger = setup_logging()
     install_exception_hook()
