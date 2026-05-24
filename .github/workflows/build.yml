@@ -2,6 +2,8 @@ name: Build and Release SEAMS
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*.*.*'
   workflow_dispatch:
@@ -39,6 +41,7 @@ jobs:
           restore-keys: venv-${{ runner.os }}-py312-
 
       - name: Create build venv and install dependencies
+        shell: cmd
         run: |
           python -m venv .venv-build
           call .venv-build\Scripts\activate.bat
@@ -47,6 +50,7 @@ jobs:
           pip install --quiet maturin pyinstaller packaging
 
       - name: Build Rust extension
+        shell: cmd
         run: |
           call .venv-build\Scripts\activate.bat
           set PYO3_PYTHON=.venv-build\Scripts\python.exe
@@ -60,10 +64,11 @@ jobs:
           python -c "from seams_core import edge_blend_symmetric; print('seams_core: VERIFIED OK')" 2>nul || echo [WARNING] seams_core not available, continuing with Numba fallback
 
       - name: Install UPX
-        run: |
-          choco install upx --yes
+        shell: pwsh
+        run: choco install upx --yes
 
       - name: Build with PyInstaller
+        shell: cmd
         run: |
           call .venv-build\Scripts\activate.bat
           where upx >nul 2>&1 && for /f "tokens=*" %%u in ('where upx') do set "UPX=%%u"
@@ -71,7 +76,7 @@ jobs:
 
       - name: Build installer with Inno Setup
         if: startsWith(github.ref, 'refs/tags/')
-        uses: innosetup-innosetup@v1
+        uses: Minionguyjpro/Inno-Setup-Action@v1.2.2
         with:
           path: installer.iss
 
