@@ -1,0 +1,71 @@
+---
+title: Splat Synthesis
+description: Create non-repetitive seamless textures via texture bombing.
+---
+
+# Splat Synthesis
+
+Splat Synthesis (texture bombing) creates seamless textures by placing randomized patches of the source image across a tiled canvas. This breaks up repetitive patterns and produces organic, natural-looking results.
+
+<Tip>
+Splat Synthesis is ideal for stone, bark, terrain, and any organic material where you want to eliminate visible repetition. For architectural or fabric textures, use [Overlap Blend](/pages/seamless/overlap-blend) instead.
+</Tip>
+
+## Technique Selection
+
+In the Seamless panel, set the **Method** dropdown to **Splat Synthesis**.
+
+## Controls
+
+| Slider | Range | Default | Description |
+|---|---|---|---|
+| Edge Falloff | 0–100% | 0% | Patch edge softness (0% = hard square, 100% = soft circle) |
+| Splat Scale | 0–5 | 0 | Patch size multiplier relative to source (0 = auto) |
+| Splat Rotation | 0–360° | 0° | Base rotation angle applied to all patches |
+| Random Rotation | 0–100% | 0% | Randomized rotation range for each patch |
+| Splat Wobble | 0–100% | 0% | Random position jitter of patch centers |
+
+### How It Works
+
+1. **Canvas** — A quarter-offset tiled canvas is created from the source
+2. **Grid** — Patches are placed at cell centers with `cell_size = patch_size / 2` (50% minimum overlap)
+3. **Falloff mask** — Transitions from a hard square (0%) to a soft gaussian circle (100%)
+4. **Rotation** — When `Random Rotation > 0`, up to 16 rotated patch variations are generated
+5. **Wobble** — Patch centers are displaced randomly within one cell width
+6. **Compositing** — JIT-accelerated blending composites all patches onto the canvas
+
+### Deterministic Output
+
+Splat uses a fixed random seed of **42**, so the same input with the same parameters always produces the same output. This ensures consistency across preview and full-resolution passes.
+
+<Note>
+There is no user control for the random seed. If you need variation, adjust Splat Wobble or Random Rotation.
+</Note>
+
+## Patch Caching
+
+Rotated patch variations are cached per `(image_hash, shape, scale, rotation, rand_rot, falloff)` key with LRU eviction (max 8 entries). This means:
+
+- Sliders that don't affect patch generation (like Wobble) are instant
+- Changing Rotation or Scale requires regenerating patches (brief delay)
+- The cache persists within a session but not across restarts
+
+## Material Presets
+
+| Preset | Best For |
+|---|---|
+| **Stone** | Rocky surfaces, concrete, pavement |
+| **Fabric** | Woven materials, textiles |
+| **Organic** | Bark, leaves, terrain, moss |
+| **Hard Surface** | Metal panels, painted surfaces |
+
+## Comparison: Overlap Blend vs. Splat Synthesis
+
+| Feature | Overlap Blend | Splat Synthesis |
+|---|---|---|
+| Repetition | May show tiling pattern | Breaks up repetition |
+| Best for | Architectural, fabric | Organic, stone, terrain |
+| Speed | Fast | Moderate (patch generation) |
+| Controls | X/Y overlap + falloff | Scale, rotation, wobble, falloff |
+| Deterministic | Yes | Yes (fixed seed) |
+| Chunked | Yes (>2048px) | Yes (>2048px) |

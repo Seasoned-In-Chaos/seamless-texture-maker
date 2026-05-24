@@ -1,0 +1,64 @@
+---
+title: Auto-Update
+description: How SEAMS checks for, downloads, and applies updates with SHA256 verification.
+---
+
+# Auto-Update
+
+SEAMS includes a built-in auto-updater that checks for new versions on GitHub and applies them with SHA256 integrity verification.
+
+## How It Works
+
+1. **Check on startup** — A background thread queries the GitHub Releases API on every launch
+2. **Version comparison** — Uses `packaging.version.parse` for semantic version comparison
+3. **Update banner** — If a newer version is found, a non-intrusive purple bar appears at the top of the window
+
+## Update Banner
+
+The banner displays the new version number and three options:
+
+| Button | Action |
+|---|---|
+| **Download & Restart** | Downloads the update in the background, then applies it |
+| **View Release Notes** | Opens the GitHub release page in your browser |
+| **X** (Dismiss) | Hides the banner for this session |
+
+## Download & Apply Process
+
+1. The new EXE is downloaded to the same directory as the current executable
+2. A progress bar is shown in the update banner during download
+3. **SHA256 verification** — If a `.sha256` sidecar file exists on GitHub, the download is verified before proceeding
+4. A batch file (`apply_update.bat`) is written that:
+   - Waits for the current SEAMS process to exit (by PID)
+   - Copies the new EXE over the old EXE
+   - Re-launches SEAMS
+   - Deletes itself
+
+## Manual Check
+
+You can manually check for updates via **Help → Check for Updates** in the menu bar.
+
+## Cleanup
+
+On each startup, SEAMS removes stale update artifacts:
+- `SEAMS_new.exe` — leftover from incomplete updates
+- `apply_update.bat` — leftover batch script
+
+<Note>
+The auto-updater only works on Windows because it relies on batch-file process replacement. macOS and Linux are not supported.
+</Note>
+
+## SHA256 Verification
+
+When a `.sha256` file is published alongside the release asset on GitHub, SEAMS:
+
+1. Fetches the `.sha256` file content
+2. Computes SHA256 of the downloaded EXE
+3. Compares the two hashes
+4. Aborts the update if they don't match
+
+This ensures the download wasn't corrupted or tampered with.
+
+<Warning>
+If no `.sha256` sidecar exists for a release, the update proceeds without verification. For maximum security, always publish a SHA256 hash alongside release assets.
+</Warning>

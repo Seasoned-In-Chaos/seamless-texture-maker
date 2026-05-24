@@ -1,0 +1,113 @@
+---
+title: Getting Started
+description: Install SEAMS and launch it for the first time.
+---
+
+# Getting Started
+
+## System Requirements
+
+| Requirement | Minimum | Recommended |
+|---|---|---|
+| **Operating System** | Windows 10 (64-bit) | Windows 11 |
+| **Python** | 3.12 | 3.12 |
+| **RAM** | 8 GB | 16 GB+ |
+| **GPU** | Any (CPU fallback works) | NVIDIA with CUDA |
+| **OpenGL** | 2.1 compatibility | 4.5+ |
+| **Disk Space** | 500 MB | 1 GB+ |
+| **Rust Toolchain** | stable MSVC | stable MSVC (for building extension) |
+
+## Installation
+
+### From Source
+
+```bash
+# Clone the repository
+git clone https://github.com/Seasoned-In-Chaos/seamless-texture-maker.git
+cd seamless-texture-maker
+
+# Create a virtual environment
+python -m venv .venv
+.venv\Scripts\activate
+
+# Install Python dependencies
+pip install -r requirements.txt
+
+# Build the Rust extension (optional — falls back to Numba JIT)
+pip install maturin
+cd seams_core
+maturin develop --release
+cd ..
+
+# Launch SEAMS
+python main.py
+```
+
+<Note>
+The Rust extension (`seams_core`) provides native-speed edge blending, gradient computation, and splat synthesis. If it fails to build, SEAMS automatically falls back to Numba JIT — everything still works, just slightly slower.
+</Note>
+
+### Pre-built Installer
+
+Download the latest installer from the [GitHub Releases](https://github.com/Seasoned-In-Chaos/seamless-texture-maker/releases) page. Run the Inno Setup installer and follow the prompts.
+
+## First Launch
+
+When you launch SEAMS for the first time:
+
+1. **Splash screen** — A ~2.5 second animated splash plays while Numba JIT functions are pre-compiled in the background. This ensures your first interaction is stall-free.
+
+2. **Empty workspace** — The main window opens in Classic Mode with an empty 2D viewport. Double-click or drag-and-drop an image to get started.
+
+3. **Single instance** — SEAMS uses a Windows named mutex to prevent duplicate instances. If you try to launch a second copy, the existing window is brought to focus instead.
+
+## DPI & Display
+
+SEAMS uses `PassThrough` DPI rounding policy, which respects your native Windows scaling:
+
+| Display | Scale Factor | Behavior |
+|---|---|---|
+| 1080p at 100% | 1.0x | Pixel-perfect, no scaling |
+| 1080p at 125% | 1.25x | Native OS scaling, window clamped to screen |
+| 1440p at 150% | 1.5x | Native OS scaling |
+| 4K at 200% | 2.0x | Native OS scaling |
+
+The main window automatically clamps to your available screen area on launch, even if a previously saved geometry was larger.
+
+## Settings Location
+
+All persistent settings are stored in:
+
+```
+%APPDATA%\SeamlessTextureMaker\settings.json
+```
+
+Numba JIT cache is stored in:
+
+```
+%APPDATA%\SeamlessTextureMaker\numba_cache
+```
+
+<Warning>
+If you experience window sizing issues (window too large, can't resize), delete the `window_geometry` key from `settings.json` while SEAMS is closed. On next launch, the window will use safe defaults.
+</Warning>
+
+## Building from Source (Full Pipeline)
+
+The `build.bat` script runs the complete production build:
+
+```batch
+build.bat
+```
+
+This 8-step pipeline:
+1. Finds Python 3.12
+2. Creates/updates the build virtual environment
+3. Installs all dependencies
+4. Verifies MSVC toolchain
+5. Builds the Rust extension
+6. Runs PyInstaller
+7. Signs the executable (if signtool is available)
+8. Builds the Inno Setup installer
+
+For Microsoft Store (MSIX) builds, use `build_store.bat` instead.

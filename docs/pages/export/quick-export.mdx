@@ -1,0 +1,66 @@
+---
+title: Quick Export
+description: Save your seamless texture or individual PBR maps quickly.
+---
+
+# Quick Export
+
+SEAMS provides several fast export paths for saving your work without opening the full export dialog.
+
+## Save Current Texture (`Ctrl+S`)
+
+Saves the processed seamless texture to disk.
+
+| Setting | Options | Default |
+|---|---|---|
+| Format | PNG, JPG, TIFF | PNG (from settings) |
+| Save Mode | Save as new file (`_seamless` suffix), Overwrite original | Save as new file |
+
+- **PNG**: Compression level 6, lossless
+- **JPEG**: Quality 95, subsampling 0 (best quality), alpha stripped
+- **TIFF**: LZW compression
+
+All saves use atomic writes (temp file → `os.replace()`) to prevent corruption.
+
+## Save As... (`Ctrl+Shift+S`)
+
+Opens a file dialog to choose the output path and format.
+
+## Export Selected Map (`Ctrl+E`)
+
+Exports the currently selected channel from the [Channel Dock](/pages/material-lab#channel-dock). If the map hasn't been generated yet, it's computed on-the-fly.
+
+File suffix naming:
+
+| Channel | Suffix |
+|---|---|
+| Base Color | `_basecolor` |
+| Normal | `_normal` |
+| Roughness | `_roughness` |
+| Metallic | `_metallic` |
+| AO | `_ao` |
+| Height | `_height` |
+| Opacity | `_opacity` |
+| Emissive | `_emissive` |
+
+## DPI Preservation
+
+Source image DPI metadata is preserved in the output. If the source has 300 DPI, the export will too.
+
+## File Format Details
+
+| Format | Compression | Alpha | Bit Depth |
+|---|---|---|---|
+| **PNG** | Level 6 | Yes | 8 or 16-bit |
+| **JPEG** | Quality 95, subsampling 0 | No (stripped) | 8-bit |
+| **TIFF** | LZW | Yes | 8 or 16-bit |
+| **TGA** | None | Yes | 8-bit |
+| **EXR** | Float32 | Yes | 32-bit float |
+
+<Warning>
+EXR export requires OpenCV built with OpenEXR support. If unavailable, an error is raised. The environment variable `OPENCV_IO_ENABLE_OPENEXR=1` is set at launch to enable EXR support.
+</Warning>
+
+## Stale Temp Cleanup
+
+SEAMS writes to temporary files (`.seams-*` prefix) during save operations. Files matching this pattern older than 24 hours are automatically cleaned when the output directory is accessed.

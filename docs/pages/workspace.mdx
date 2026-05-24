@@ -1,0 +1,125 @@
+---
+title: Workspace
+description: Understand SEAMS' workspace layout, navigation, and display modes.
+---
+
+# Workspace
+
+SEAMS has a single-window layout with three main areas: the Navigation Rail, the Viewport, and the Inspector Panel.
+
+## Navigation Rail (Left, 236px)
+
+The navigation rail provides access to all workflow stages:
+
+| Section | Item | Shortcut | Description |
+|---|---|---|---|
+| **IMPORT** | Import Texture | `Ctrl+O` | Open an image file |
+| **PROCESS** | Delight | `1` | Switch to Delight panel |
+| | Seamless | `2` | Switch to Seamless panel |
+| **MATERIAL** | Material Lab | `3` | Switch to Material Lab panel |
+| **EXPORT** | Export | `Ctrl+S` | Quick save current texture |
+
+### Quick Info Card
+
+At the bottom of the navigation rail, a card displays image metadata:
+
+- **Resolution** (e.g., 2048 × 2048)
+- **Color Space** (sRGB / Grayscale)
+- **Format** (PNG, JPEG, etc.)
+- **Bit Depth** (8-bit / 16-bit)
+- **File Size**
+
+## Inspector Panel (Right, 372px)
+
+The right panel changes based on the active workflow mode:
+
+| Mode | Panel | Action Button |
+|---|---|---|
+| Delight (`1`) | PreprocessingPanel | APPLY DELIGHT |
+| Seamless (`2`) | ControlPanel | EXPORT TEXTURE |
+| Material Lab (`3`) | MaterialControlPanel | EXPORT MAP |
+
+Each panel's action button is only visible when that mode is active.
+
+## Status Bar (Bottom, 26px)
+
+The status bar shows:
+
+- **File info** — Name, dimensions, size
+- **Status messages** — Auto-expiring notifications
+- **Progress bar** — Indeterminate, hidden when idle
+- **System monitor** — CPU, MEM, and GPU (NVIDIA only) usage bars
+
+### System Monitor
+
+- Polls every 1.5 seconds via `psutil` and `nvidia-smi`
+- GPU bar only appears if an NVIDIA GPU is detected
+- Color coding: Normal → Warning (amber ≥75%) → Critical (red ≥90%)
+
+## Workspace Modes
+
+### Classic Mode
+
+The default mode shows a full-width 2D texture viewer with:
+
+- Before/After comparison views
+- Tiling preview
+- Zoom and pan controls
+- Channel dock at the bottom
+
+### Studio Mode
+
+A split view with the 3D PBR viewport on the left and the 2D viewer on the right:
+
+- Configurable splitter ratio (drag to resize)
+- Fullscreen mode available for the 3D viewport (press `Escape` to exit)
+- Toggle between modes via the View menu or the bottom bar button
+
+<Tip>
+Studio Mode is the best way to evaluate your PBR material in context. The 3D viewport uses a physically-based Cook-Torrance BRDF with ACES tonemapping, matching how your material will look in a production renderer.
+</Tip>
+
+## Menus
+
+### File
+
+| Item | Shortcut |
+|---|---|
+| Open Texture... | `Ctrl+O` |
+| Save Current Texture | `Ctrl+S` |
+| Save As... | `Ctrl+Shift+S` |
+| Export Selected Map... | `Ctrl+E` |
+| Export Renderer Pipeline... | `Ctrl+Shift+E` |
+| Exit | `Alt+F4` |
+
+### Edit
+
+| Item | Shortcut |
+|---|---|
+| Undo | `Ctrl+Z` |
+| Redo | `Ctrl+Y` |
+| Reset View | `Ctrl+0` |
+| Apply Delight | — |
+
+### View
+
+| Item | Shortcut |
+|---|---|
+| Delight | `1` |
+| Seamless | `2` |
+| Material Lab | `3` |
+| Classic Mode | — |
+| Studio Mode | — |
+
+### Help
+
+| Item | Shortcut |
+|---|---|
+| Keyboard Shortcuts | `F1` |
+| Check for Updates | — |
+
+### About
+
+| Item | Shortcut |
+|---|---|
+| About SEAMS | — |

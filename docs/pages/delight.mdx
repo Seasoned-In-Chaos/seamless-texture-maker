@@ -1,0 +1,69 @@
+---
+title: Delight
+description: Remove directional lighting and shadows from photos to create flat base color textures.
+---
+
+# Delight
+
+The Delight tool removes directional lighting, shadows, and highlights from photographs to produce flat albedo or base color textures suitable for PBR workflows.
+
+<Note>
+Delighting operates in LAB color space. It extracts low-frequency lighting via Gaussian blur of the L channel, then compensates to produce even illumination.
+</Note>
+
+## Light Field Analysis
+
+| Control | Type | Options | Default |
+|---|---|---|---|
+| Intensity Preset | Chip selector | Soft, Balanced, Aggressive | Balanced |
+
+The preset controls the overall strength of the delighting pass. Choose:
+- **Soft** — Subtle correction, preserves more original character
+- **Balanced** — Moderate correction, good for most photos
+- **Aggressive** — Strong flattening, removes heavy lighting
+
+## Adjustment Sliders
+
+All sliders default to **0** (no processing). Adjust them as needed:
+
+| Slider | Range | Default | Description |
+|---|---|---|---|
+| Shadow Removal | 0–100% | 0% | Removes dark shadows from the image |
+| Highlight Reduction | 0–100% | 0% | Reduces bright specular spots |
+| Contrast Recovery | 0–100% | 0% | Restores contrast lost during delighting |
+| Detail Preservation | 0–100% | 0% | Preserves fine surface details |
+| Color Preservation | 0–100% | 0% | Maintains original color relationships |
+| Flatness Strength | 0–100% | 0% | Flattens color variation toward the mean |
+| AO Removal | 0–100% | 0% | Removes ambient occlusion baked into the photo |
+| Edge Consistency | 0–100% | 0% | Maintains consistent color at edges |
+
+<Tip>
+The effective delight strength is `max(shadow, ao, highlight)`. If you set Shadow Removal to 80% and everything else to 0, the delight will operate at 80% strength using the shadow algorithm.
+</Tip>
+
+## Output Intent
+
+| Control | Type | Options | Default |
+|---|---|---|---|
+| Output Type | Combo | Albedo/Diffuse, Base Color, Diffuse, Raw | Albedo/Diffuse |
+| Bit Depth | Combo | 8-bit, 16-bit, 32-bit | 16-bit |
+| Keep color temperature | Checkbox | — | Checked |
+
+- **Albedo/Diffuse** — Removes all lighting information
+- **Base Color** — Preserves some color temperature
+- **Diffuse** — Standard diffuse output
+- **Raw** — Minimal processing, mostly for debugging
+
+<Warning>
+Clicking **APPLY DELIGHT** is a destructive operation. It modifies the base image and pushes the previous state to the undo stack (up to 20 steps). All delight sliders are reset to 0 after applying.
+</Warning>
+
+## Algorithm Details
+
+1. Convert image from RGB to LAB color space
+2. Apply Gaussian blur to L channel (sigma = `max(h,w) * 0.1`, clamped 10–500) to extract low-frequency lighting
+3. Compensate: `delighted_L = (L / lowfreq_L) * mean_L`
+4. Flatness replaces A/B channels with their mean values
+5. Blend result with original based on effective strength
+
+The algorithm runs at reduced scale (2048 max) for images larger than 2048px, then upsamples and blends back.

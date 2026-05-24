@@ -1,0 +1,125 @@
+---
+title: PBR Export Pipeline
+description: Full production export with renderer-specific presets and auto material generation.
+---
+
+# PBR Export Pipeline
+
+Press `Ctrl+Shift+E` to open the Production Export dialog. This provides renderer-specific export with automatic material generation.
+
+## Renderer Presets
+
+| Renderer | Token | Default Normal | Default Format | Default Bit Depth |
+|---|---|---|---|---|
+| **Corona** | CORONA | OpenGL (Y+) | PNG | 16-bit |
+| **V-Ray** | VRAY | DirectX (Y-) | TIFF | 16-bit |
+| **Unreal Engine 5** | UE5 | DirectX (Y-) | PNG | 8-bit |
+| **Blender** | BLENDER | OpenGL (Y+) | PNG | 16-bit |
+| **Generic PBR** | PBR | OpenGL (Y+) | PNG | 16-bit |
+
+Selecting a renderer applies its default settings and shows renderer-specific options.
+
+## Common Export Settings
+
+| Setting | Options | Default (varies by renderer) |
+|---|---|---|
+| Workflow | Metallic/Roughness, Specular/Glossiness | Per renderer |
+| Texture Format | PNG, TIFF, EXR | Per renderer |
+| Normal Format | OpenGL (Y+), DirectX (Y-) | Per renderer |
+| Bit Depth | 8-bit, 16-bit, 32-bit | Per renderer |
+| Resolution | 1K (1024), 2K (2048), 4K (4096), 8K (8192) | 4K |
+| Compression | Balanced, Lossless, Render Farm Safe | Balanced |
+| Padding / Dilation | 0px, 8px, 16px, 32px | 0px |
+| Color Management | Renderer Preset, sRGB, Linear, ACES | Per renderer |
+| Texture Scale | 1.0, 0.5, 2.0, Real-world | 1.0 |
+
+<Note>
+The Resolution setting resizes the image. It does not supersample — selecting 8K for a 2K source will upscale. Select the resolution that matches or is lower than your source for best quality.
+</Note>
+
+## Map Toggles
+
+| Map | Colorspace | Default | Notes |
+|---|---|---|---|
+| BaseColor | sRGB | On | — |
+| Roughness | Linear | On | Converted to Glossiness if workflow requires |
+| Metallic | Linear | On | — |
+| Normal | Linear | On | — |
+| AO | Linear | On | Packed into ORM for UE5 |
+| Height | Linear | On | — |
+| Opacity | Linear | Off | Off by default |
+| Emissive | sRGB | Off | Off by default |
+
+Each map card shows a thumbnail, name, colorspace/bit-depth, and packed/unpacked state.
+
+## Output Configuration
+
+| Setting | Default |
+|---|---|
+| Export Folder | Last used directory or user home |
+| Material Name | `Material_01` |
+| Create Renderer Subfolder | Checked |
+| Subfolder Name | `{MaterialName}_{RendererToken}` |
+
+Invalid filename characters in the material name are replaced with `_` and duplicate underscores are collapsed.
+
+## File Naming
+
+### UE5 Convention
+
+- `T_{MaterialName}_D{ext}` — Diffuse/BaseColor
+- `T_{MaterialName}_N{ext}` — Normal
+- `T_{MaterialName}_ORM{ext}` — Packed ORM
+
+### All Other Renderers
+
+- `{MaterialName}_{Token}_{Channel}{ext}`
+
+### Export Extensions
+
+`.png`, `.tiff`, `.tga`, `.exr` depending on format selection.
+
+## Material Sidecar Files
+
+A JSON sidecar is always written:
+
+```
+{MaterialName}_{Token}_material_preset.json
+```
+
+Containing: material name, engine, workflow, normal format, color management, texture scale, and all map file paths.
+
+### Renderer-Specific Sidecars
+
+| Renderer | Sidecar File | Content |
+|---|---|---|
+| Corona / V-Ray | `{name}_{token}_3dsmax.ms` | MaxScript with texture map paths |
+| Blender | `{name}_BLENDER_nodes.py` | Python script for node setup |
+| UE5 | `{name}_UE5_material_instance.txt` | UE5 material instance info |
+| Generic PBR | JSON only | Material preset JSON |
+
+<Warning>
+The auto-generated sidecar scripts currently contain placeholder comments and map paths. They do not include full material node setup logic. This is planned for a future update.
+</Warning>
+
+## Glossiness Conversion
+
+When the **Specular/Glossiness** workflow is selected, or when renderer-specific "Convert Roughness to Glossiness" is enabled:
+
+```
+glossiness = bitwise_not(roughness_gray)
+```
+
+This produces an inverted roughness map suitable for glossiness-based renderers.
+
+## Displacement Clamping
+
+When "Clamp displacement values" is enabled (Corona default), grayscale values are clamped to the range `[8, 247]` to prevent extreme displacement artifacts.
+
+---
+
+For renderer-specific details, see:
+- [Unreal Engine 5](/pages/export/ue5)
+- [Blender](/pages/export/blender)
+- [Corona](/pages/export/corona)
+- [V-Ray](/pages/export/vray)

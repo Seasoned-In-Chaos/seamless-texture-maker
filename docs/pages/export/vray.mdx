@@ -1,0 +1,69 @@
+---
+title: V-Ray
+description: Export PBR textures for V-Ray with glossiness mode and MaxScript generation.
+---
+
+# V-Ray Export
+
+SEAMS exports textures optimized for Chaos V-Ray with reflection glossiness mode, DirectX normal convention, and 3ds Max MaxScript generation.
+
+## V-Ray Default Settings
+
+| Setting | Value |
+|---|---|
+| Workflow | Metallic/Roughness |
+| Normal Format | DirectX (Y-) |
+| Format | TIFF |
+| Bit Depth | 16-bit |
+| Color Management | Renderer Preset |
+
+## V-Ray-Specific Options
+
+All options default to **enabled**:
+
+| Option | Description |
+|---|---|
+| Convert Roughness to Glossiness | Inverts roughness for VRayMtl reflection glossiness |
+| VRayBitmap optimized | Uses VRayBitmap loader for optimal V-Ray texture handling |
+| Generate VRayMtl preset | Creates a MaxScript to set up VRayMtl in 3ds Max |
+| Linear workflow support | Correct gamma settings for V-Ray linear workflow |
+| Reflection glossiness mode | Exports glossiness for VRayMtl reflection glossiness slot |
+| VRayDisplacementMod support | Includes displacement setup via VRayDisplacementMod |
+
+## Glossiness Conversion
+
+V-Ray's VRayMtl uses reflection glossiness. When "Convert Roughness to Glossiness" is enabled:
+
+```
+glossiness = bitwise_not(roughness_gray)
+```
+
+## MaxScript
+
+When "Generate VRayMtl preset" is enabled, a MaxScript file is created:
+
+```
+MaterialName_VRAY_3dsmax.ms
+```
+
+<Note>
+The MaxScript currently contains placeholder comments and map paths. Full VRayMtl creation logic is planned for a future update.
+</Note>
+
+## File Naming
+
+```
+MaterialName_VRAY_BaseColor.tiff
+MaterialName_VRAY_Normal.tiff
+MaterialName_VRAY_Glossiness.tiff
+MaterialName_VRAY_Metallic.tiff
+MaterialName_VRAY_AO.tiff
+MaterialName_VRAY_Height.tiff
+```
+
+## Tips for V-Ray
+
+- Use **VRayBitmap** nodes for all texture maps (not standard Bitmap)
+- Set BaseColor to **sRGB**, all other maps to **Linear** (Non-Color)
+- For displacement, add **VRayDisplacementMod** modifier to geometry
+- Set normal map type to **DirectX** in VRayNormalMap node

@@ -1,0 +1,107 @@
+---
+title: 3D PBR Viewport
+description: Preview your PBR material on 3D meshes with physically-based rendering.
+---
+
+# 3D PBR Viewport
+
+The 3D viewport renders your PBR material on 3D meshes using a Cook-Torrance BRDF with ACES tonemapping. Available in Studio Mode only.
+
+## Camera Controls
+
+| Input | Action |
+|---|---|
+| Left-click drag | Orbit (yaw/pitch) |
+| Right-click or middle-click drag | Pan |
+| Scroll wheel | Zoom (1.0–20.0 range, 0.88× per step) |
+| Double-click | Reset camera to default position |
+
+All camera motion uses exponential interpolation (damping at 0.14 per tick ≈ 16ms) for smooth movement.
+
+## Mesh Types
+
+| Mesh | Description |
+|---|---|
+| **Sphere** | UV sphere (64 lat, 96 lon), radius 1.35 |
+| **Cube** | 6-face cube, 40 segments per face |
+| **Plane** | XZ-oriented plane, size 3.0, 96 segments |
+
+<Tip>
+The Cube mesh with 40 segments per face is ideal for visualizing displacement mapping. The Plane mesh shows tiling behavior clearly.
+</Tip>
+
+## HDRI Lighting Presets
+
+| Preset | Character | Best For |
+|---|---|---|
+| **Studio** | Cool neutral light from upper-left | General material inspection |
+| **Outdoor** | Warm sunlight with blue sky environment | Exterior materials |
+| **Archviz** | Warm interior light from the side | Interior materials, wood, fabric |
+| **Neutral Gray** | Pure gray environment, no color cast | Comparing materials objectively |
+
+## Toolbar Controls
+
+| Control | Type | Range | Default | Description |
+|---|---|---|---|---|
+| Mesh | Combo | Sphere, Cube, Plane | Sphere | Display geometry |
+| HDRI | Combo | Studio, Outdoor, Archviz, Neutral Gray | Studio | Lighting environment |
+| Tiling | Combo | 1×, 2×, 4×, Infinite | 1× | Texture tiling on the mesh |
+| Wire | Toggle | — | Off | Wireframe overlay |
+| UV | Toggle | — | Off | 8×8 UV checker grid |
+| Triplanar | Toggle | — | Off | Projects texture from 3 axes for seamless coverage |
+| Tess | Toggle | — | Off | Enables displacement mapping |
+| Height | Slider | 0–35 | 8 | Displacement strength (maps to 0.08 internally) |
+| Exposure | Slider | 20–220 | 100 | Exposure multiplier (100 = 1.0×) |
+| Env | Slider | 0–220 | 100 | Environment intensity (100 = 1.0×) |
+| Rotate | Slider | 0–360° | 0° | Environment rotation |
+| Fullscreen | Button | — | — | Enter fullscreen (Escape to exit) |
+
+## Rendering Features
+
+### PBR Shading
+
+The viewport uses a **Cook-Torrance** BRDF model:
+- **Distribution**: GGX (Trowbridge-Reitz)
+- **Geometry**: Smith (GGX)
+- **Fresnel**: Schlick approximation
+- **Tonemapping**: ACES filmic
+
+### Color Spaces
+
+The viewport correctly handles sRGB and linear color spaces:
+- **BaseColor** and **Emissive** are treated as sRGB (converted to linear for shading)
+- **Normal**, **Roughness**, **Metallic**, **AO**, **Height** are treated as linear data
+
+### Displacement Mapping
+
+When **Tess** is enabled:
+- Height map values displace vertices along their normals
+- The **Height** slider controls displacement strength (0–35 range, internally scaled)
+- Works best on the Cube mesh (high segment count for smooth displacement)
+
+### Triplanar Mapping
+
+When **Triplanar** is enabled:
+- Texture is projected from X, Y, and Z axes
+- Smooth blending at axis boundaries
+- Useful for viewing how a material looks on arbitrary geometry without UV seams
+
+### Stats Overlay
+
+The viewport displays a stats overlay:
+
+```
+FPS XXX   GPU tex XX.X MB   XXXX × XXXX   PBR/Isolate   MeshName
+```
+
+## OpenGL Requirements
+
+SEAMS requires **OpenGL 2.1** with compatibility profile. The app configures:
+- 4× MSAA
+- 24-bit depth buffer
+- 8-bit stencil buffer
+- VSync on
+
+<Warning>
+If OpenGL 2.1 is not available, SEAMS will raise a RuntimeError on startup. Update your GPU drivers or switch to a GPU that supports OpenGL 2.1 compatibility profile.
+</Warning>

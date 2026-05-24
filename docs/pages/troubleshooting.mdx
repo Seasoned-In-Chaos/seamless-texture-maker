@@ -1,0 +1,109 @@
+---
+title: Troubleshooting
+description: Common issues and how to fix them.
+---
+
+# Troubleshooting
+
+## Window Too Large / Off-Screen
+
+**Symptoms**: The main window is too wide to fit on screen, or appears partially off-screen. Can't resize it.
+
+**Fix**:
+
+1. Close SEAMS
+2. Open `%APPDATA%\SeamlessTextureMaker\settings.json`
+3. Delete the `window_geometry` key (or the entire file to reset all settings)
+4. Launch SEAMS — the window will use safe defaults (1200×800, centered on screen)
+
+**Cause**: Saved window geometry from a previous monitor/DPI setup is restored on launch. SEAMS now clamps the window to available screen area after restore, but old settings from before this fix may still cause issues.
+
+---
+
+## OpenGL Errors
+
+**Symptoms**: RuntimeError on startup about OpenGL 2.1 not being available.
+
+**Fix**:
+1. Update your GPU drivers to the latest version
+2. Ensure your GPU supports OpenGL 2.1 compatibility profile (most GPUs from the last 15 years do)
+3. If using a laptop with dual GPUs, force SEAMS to use the dedicated GPU (NVIDIA Control Panel → Manage 3D Settings)
+
+**SEAMS configures**: OpenGL 2.1 compatibility profile, 4× MSAA, 24-bit depth, 8-bit stencil, VSync on.
+
+---
+
+## CUDA Not Detected
+
+**Symptoms**: GPU acceleration not active, operations running on CPU only.
+
+**Fix**:
+1. Install NVIDIA CUDA Toolkit
+2. Ensure `opencv-python` is built with CUDA support (the default `pip install` version may not include CUDA)
+3. Check the system monitor in the status bar — the GPU bar only appears if `nvidia-smi` is available
+
+<Note>
+SEAMS works fine without CUDA. CPU mode + Numba JIT is perfectly usable for textures up to 4K. CUDA provides 3–5× speedup for heavy operations.
+</Note>
+
+---
+
+## Splat Results Look Repetitive
+
+**Symptoms**: Splat Synthesis output looks similar to the source or shows repetition.
+
+**Fix**:
+- Increase **Splat Wobble** (30–80%) for more position variation
+- Increase **Random Rotation** (50–100%) for rotation variety
+- Adjust **Splat Scale** (1–3 range) — too low or too high can cause issues
+- Try a different **Material Preset**
+
+---
+
+## Normal Map Looks Wrong
+
+**Symptoms**: Normal map appears inverted or lighting looks incorrect in the 3D viewport or external renderer.
+
+**Fix**:
+- **For OpenGL renderers** (Blender, Corona): Ensure "Invert Y (DirectX)" is **unchecked**
+- **For DirectX renderers** (UE5, V-Ray): Ensure "Invert Y (DirectX)" is **checked**
+- If bumps appear as dents, enable "Invert Height" in the Normal & Bump section
+
+---
+
+## Export Dialog Missing Dilation
+
+**Symptoms**: Padding/dilation option in export dialog doesn't seem to do anything.
+
+**Status**: The padding/dilation UI option is exposed in the dialog but dilation processing is not yet implemented in the pipeline. This is a known limitation.
+
+---
+
+## EXR Export Fails
+
+**Symptoms**: IOError when trying to export as EXR.
+
+**Fix**: Ensure OpenCV is built with OpenEXR support. SEAMS sets `OPENCV_IO_ENABLE_OPENEXR=1` at launch, but the underlying OpenCV binary must also support it.
+
+---
+
+## Splash Screen Takes Too Long
+
+**Symptoms**: Splash screen stays visible for more than 3–4 seconds.
+
+**Cause**: Numba JIT warmup runs during the splash animation. On the first launch (or after clearing the numba cache), all JIT functions must be compiled, which takes longer.
+
+**Fix**: Subsequent launches use cached JIT functions from `%APPDATA%\SeamlessTextureMaker\numba_cache` and will be faster.
+
+---
+
+## Auto-Update Doesn't Work
+
+**Symptoms**: No update notification appears, or update fails to apply.
+
+**Fix**:
+1. Check internet connectivity
+2. Verify the GitHub Releases API is accessible from your network
+3. Check if `SEAMS_new.exe` or `apply_update.bat` exist in the application directory — delete them if stale
+4. Try **Help → Check for Updates** manually
+5. The auto-updater requires the app to be run from an EXE (not `python main.py`)

@@ -1,0 +1,91 @@
+---
+title: Quick Start
+description: Go from a photo to a seamless PBR material set in under 2 minutes.
+---
+
+# Quick Start
+
+Follow these 6 steps to create your first seamless PBR material:
+
+## 1. Open an Image
+
+Press `Ctrl+O` or drag-and-drop an image onto the 2D viewport. SEAMS supports:
+
+- PNG, JPEG, TIFF, TGA, EXR
+- Minimum 64×64, maximum 8192×8192
+- 8-bit, 16-bit, and 32-bit depth
+- sRGB and linear color spaces
+
+The image appears in the viewport with file info in the navigation rail's Quick Info card.
+
+## 2. Delight (Optional)
+
+Press `1` to switch to the Delight panel, or click the Delight icon in the navigation rail.
+
+1. Select an **Intensity Preset**: Soft, Balanced, or Aggressive
+2. Adjust sliders as needed (all default to 0 — no processing until you change them)
+3. Click **APPLY DELIGHT**
+
+<Note>
+Delighting is destructive — it modifies the base image and pushes the previous state to the undo stack. You can undo with `Ctrl+Z` (up to 20 steps).
+</Note>
+
+## 3. Make Seamless
+
+Press `2` to switch to the Seamless panel.
+
+1. Choose a **Method**: Overlap Blend or Splat Synthesis
+2. Adjust the controls for your chosen method
+3. The preview updates live as you move sliders
+4. After a 400ms pause, full-resolution processing runs automatically
+
+<Tip>
+Use **Overlap Blend** for architectural textures, fabrics, and any image with regular patterns. Use **Splat Synthesis** for organic materials like stone, bark, and terrain where you want to break up repetition.
+</Tip>
+
+## 4. Generate PBR Maps
+
+Press `3` to switch to the Material Lab.
+
+All 8 PBR maps are generated automatically from your seamless texture:
+
+- **Normal** — Surface detail and direction
+- **Roughness** — Surface smoothness
+- **Metallic** — Metal vs dielectric
+- **AO** — Ambient occlusion
+- **Height** — Surface elevation
+- **Displacement** — Tessellation displacement
+- **Opacity** — Transparency mask
+- **Emissive** — Self-illumination
+
+Adjust each map's controls, then select a channel in the dock at the bottom to preview it.
+
+## 5. Preview in 3D
+
+Switch to **Studio Mode** via the View menu or the toggle button at the bottom of the window.
+
+- The 3D viewport shows your PBR material on a mesh
+- Change **Mesh** (Sphere, Cube, Plane) and **HDRI** lighting (Studio, Outdoor, Archviz, Neutral Gray)
+- Enable **Tess** and adjust **Height** slider for displacement
+- Orbit with left-click, pan with right-click, zoom with scroll wheel
+
+## 6. Export
+
+### Quick Export
+
+Press `Ctrl+S` to save the current seamless texture, or `Ctrl+E` to save the selected PBR map.
+
+### Full PBR Export
+
+Press `Ctrl+Shift+E` to open the Production Export dialog:
+
+1. Select your **Renderer** (UE5, Blender, V-Ray, Corona, Generic PBR)
+2. Adjust format, bit depth, resolution, and map toggles
+3. Set material name and output folder
+4. Click **Export**
+
+The exporter creates all map files plus renderer-specific sidecar scripts (MaxScript, Python, or UE5 material instance).
+
+---
+
+That's it! Explore the rest of the documentation for detailed controls, tips, and renderer-specific export guides.

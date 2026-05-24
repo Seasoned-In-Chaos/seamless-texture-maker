@@ -1,0 +1,70 @@
+---
+title: Corona Renderer
+description: Export PBR textures for Corona Renderer with glossiness conversion and MaxScript generation.
+---
+
+# Corona Renderer Export
+
+SEAMS exports textures optimized for Chaos Corona with glossiness conversion, OpenGL normal convention, and 3ds Max MaxScript generation.
+
+## Corona Default Settings
+
+| Setting | Value |
+|---|---|
+| Workflow | Metallic/Roughness |
+| Normal Format | OpenGL (Y+) |
+| Format | PNG |
+| Bit Depth | 16-bit |
+| Color Management | Renderer Preset |
+
+## Corona-Specific Options
+
+All options default to **enabled**:
+
+| Option | Description |
+|---|---|
+| Convert Roughness to Glossiness | Inverts roughness to produce glossiness map for CoronaPhysicalMtl |
+| Generate CoronaPhysicalMtl preset | Creates a MaxScript to set up the material in 3ds Max |
+| Gamma-safe export | Ensures correct gamma handling for linear vs sRGB textures |
+| Use CoronaNormal compatibility | Normal map format compatible with CoronaNormal map |
+| Clamp displacement values | Clamps displacement to `[8, 247]` range to prevent artifacts |
+| Auto-generate 3ds Max material | Creates a `.ms` MaxScript for automatic material setup |
+
+## Glossiness Conversion
+
+Corona's CoronaPhysicalMtl uses glossiness rather than roughness. When "Convert Roughness to Glossiness" is enabled:
+
+```
+glossiness = bitwise_not(roughness_gray)
+```
+
+This produces an inverted roughness map suitable for the Glossiness input.
+
+## MaxScript
+
+When "Auto-generate 3ds Max material" is enabled, a MaxScript file is created:
+
+```
+MaterialName_CORONA_3dsmax.ms
+```
+
+<Note>
+The MaxScript currently contains placeholder comments and map paths. Full material creation logic is planned for a future update.
+</Note>
+
+## File Naming
+
+```
+MaterialName_CORONA_BaseColor.png
+MaterialName_CORONA_Normal.png
+MaterialName_CORONA_Glossiness.png
+MaterialName_CORONA_Metallic.png
+MaterialName_CORONA_AO.png
+MaterialName_CORONA_Height.png
+```
+
+## Tips for Corona
+
+- In 3ds Max, set BaseColor texture to **sRGB** gamma and all other maps to **Linear**
+- Use **CoronaNormal** map node for the normal map
+- Set displacement via **CoronaDisplacementMod** modifier on the geometry

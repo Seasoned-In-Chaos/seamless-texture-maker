@@ -1,0 +1,144 @@
+---
+title: Material Lab
+description: Generate and customize 8 PBR maps from a single image.
+---
+
+# Material Lab
+
+The Material Lab generates 8 PBR maps from your seamless texture, with real-time controls for each channel. Switch to it by pressing `3` or clicking Material Lab in the navigation rail.
+
+## PBR Maps
+
+All maps are generated automatically from the grayscale luminance of the input image:
+
+| Map | Method | Output |
+|---|---|---|
+| **Normal** | Sobel gradient-based (Rust-accelerated when available) | RGB, OpenGL or DirectX convention |
+| **Roughness** | Linear scaling from grayscale | Grayscale, 0–1 range |
+| **Metallic** | Scaled + Gaussian blurred from grayscale | Grayscale, 0–1 range |
+| **AO** | Multi-scale unsharp mask (3 scales) | Grayscale, 1.0=lit, 0.0=occluded |
+| **Height** | Contrast-adjusted, optionally blurred grayscale | Grayscale |
+| **Displacement** | Height scaled by `(0.25 + strength × 1.75)` | Grayscale |
+| **Opacity** | Threshold + softness transition | Grayscale alpha mask |
+| **Emissive** | Grayscale × intensity × tint | RGB with tint |
+
+Maps are generated in parallel using a ThreadPoolExecutor (4 workers for Phase 1, 2 for Phase 2). Results are cached (up to 30 entries).
+
+---
+
+## Normal & Bump
+
+| Control | Type | Range | Default | Description |
+|---|---|---|---|---|
+| Intensity | Slider | 0–100% | 50% | Normal map strength (0–5.0 internally) |
+| Detail Scale | Slider | 0–100% | 50% | High-frequency detail enhancement |
+| Smoothness | Slider | 0–100% | 0% | Gaussian blur of height source before normal calculation |
+| Invert Height | Checkbox | — | Unchecked | Inverts height source before calculation |
+| Invert Y (DirectX) | Checkbox | — | Unchecked | Flips green channel for DirectX convention |
+| Map Type | Combo | Normal Map (RGB), Bump Map (Grayscale) | Normal Map (RGB) | Output format |
+| Contrast Handling | Combo | Balanced, Auto, Soft, Sharp | Balanced | Contrast adjustment mode |
+
+### Contrast Modes
+
+| Mode | Behavior |
+|---|---|
+| **Balanced** | No change |
+| **Auto** | 2nd–98th percentile stretch |
+| **Soft** | `0.5 + (x - 0.5) × 0.65` |
+| **Sharp** | `0.5 + (x - 0.5) × 1.65` |
+
+---
+
+## Roughness
+
+| Control | Type | Range | Default | Description |
+|---|---|---|---|---|
+| Intensity | Slider | 0–100% | 50% | Roughness multiplier (0–2.0 internally) |
+| Contrast | Slider | 0–100% | 0% | Contrast boost (0–2.0 internally) |
+| Invert Roughness (Glossiness) | Checkbox | — | Unchecked | Inverts to produce a glossiness map |
+
+<Note>
+When exporting with a renderer that expects glossiness (Corona, V-Ray with "Convert Roughness to Glossiness"), the exporter handles the inversion automatically. You only need to toggle this checkbox for visual preview purposes.
+</Note>
+
+---
+
+## Metallic
+
+| Control | Type | Range | Default | Description |
+|---|---|---|---|---|
+| Metalness | Slider | 0–100% | 0% | Metallic intensity (0–2.0 internally) |
+| Edge Softness | Slider | 0–100% | 20% | Gaussian blur (sigma = `0.35 + edge × 8`) |
+
+---
+
+## Ambient Occlusion
+
+| Control | Type | Range | Default | Description |
+|---|---|---|---|---|
+| Depth | Slider | 0–100% | 50% | AO shadow intensity |
+| Spread | Slider | 0–100% | 30% | AO blur radius (sigma = `0.75 + spread × 14`) |
+
+The AO generator uses multi-scale unsharp masking at 3 scales (radius/4, radius/2, radius) with weights (0.5, 0.3, 0.2), plus an optional normal-map steepness contribution.
+
+---
+
+## Height & Displacement
+
+| Control | Type | Range | Default | Description |
+|---|---|---|---|---|
+| Depth Scale | Slider | 0–100% | 50% | Height map intensity (0–2.0 internally) |
+| Smoothing | Slider | 0–100% | 10% | Gaussian blur (sigma = `0.35 + smooth × 10`) |
+| Displacement Strength | Slider | 0–100% | 20% | Displacement multiplier |
+| Invert Height / Displacement | Checkbox | — | Unchecked | Inverts height values |
+| Contrast Handling | Combo | Balanced, Auto, Soft, Sharp | Balanced | Contrast mode for height |
+
+---
+
+## Opacity
+
+| Control | Type | Range | Default | Description |
+|---|---|---|---|---|
+| Threshold | Slider | 0–100% | 100% | Alpha cutoff (inverted internally — 100% = fully opaque) |
+| Edge Softness | Slider | 0–100% | 0% | Smooth transition width around threshold |
+
+---
+
+## Emissive
+
+| Control | Type | Range | Default | Description |
+|---|---|---|---|---|
+| Glow Power | Slider | 0–100% | 0% | Emissive intensity |
+| Glow Tint | Combo | White, Warm, Cool, Custom | White | Emissive color tint |
+
+### Tint Colors
+
+| Tint | RGB (BGR internally) |
+|---|---|
+| White | (1.0, 1.0, 1.0) |
+| Warm | (0.55, 0.82, 1.0) — orange |
+| Cool | (1.0, 0.78, 0.48) — blue |
+| Custom | (0.95, 0.55, 1.0) — purple |
+
+<Warning>
+The "Custom" tint is currently hard-coded to purple. It does not open a color picker.
+</Warning>
+
+---
+
+## Channel Dock
+
+At the bottom of the 2D viewer, a horizontal strip shows 8 channel cards:
+
+| Channel | Colorspace | Default Active |
+|---|---|---|
+| Base Color | sRGB | Yes (selected) |
+| Normal | Linear | Yes |
+| Roughness | Linear | Yes |
+| Metallic | Linear | Yes |
+| AO | Linear | Yes |
+| Height | Linear | Yes |
+| Opacity | Linear | Yes |
+| Emissive | sRGB | Yes |
+
+Click a card to isolate that channel in the 3D viewport and display it in the 2D viewer. Each card shows a thumbnail preview, channel name, colorspace label, and resolution. Uncheck a card's checkbox to disable it.

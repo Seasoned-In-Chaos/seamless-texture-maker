@@ -1,0 +1,76 @@
+---
+title: Overlap Blend
+description: Make textures seamlessly tileable by blending overlapping edges.
+---
+
+# Overlap Blend
+
+The Overlap Blend method creates seamless textures by blending overlapping strips at the seam boundaries. It works by offsetting the image by 50%, blending the overlapping regions, then cropping back to original dimensions.
+
+<Tip>
+Overlap Blend is best for architectural textures, fabrics, and any image with regular patterns that need clean tiling.
+</Tip>
+
+## Technique Selection
+
+In the Seamless panel, set the **Method** dropdown to **Overlap Blend**.
+
+### Material Presets
+
+| Preset | Description |
+|---|---|
+| **Stone** | Balanced settings for rocky surfaces |
+| **Fabric** | Tighter overlap for woven materials |
+| **Organic** | Softer falloff for natural surfaces |
+| **Hard Surface** | Sharper blending for man-made materials |
+
+## Controls
+
+| Slider | Range | Default | Description |
+|---|---|---|---|
+| Overlap X | 0–50% | 0% | Horizontal overlap blend width as a percentage of image width |
+| Overlap Y | 0–50% | 0% | Vertical overlap blend width as a percentage of image height |
+| Edge Falloff | 0–100% | 0% | Softness of the overlap transition (0% = hard cut, 100% = maximum smoothstep) |
+
+### How It Works
+
+1. **Offset** — The image is shifted by 50% in both X and Y, creating a wrapped cross at the center
+2. **Blend strips** — Horizontal and vertical strips at the seam are blended using cosine-weighted falloff
+3. **Falloff** — Hardness = `1.0 / max(0.001, falloff)`, applied via smoothstep: `mask² × (3 - 2 × mask)`
+4. **Crop** — The image is cropped and resized back to original dimensions
+
+### Blend Width
+
+The actual blend width in pixels is:
+
+```
+blend_width = image_width × overlap_x   (horizontal)
+blend_width = image_height × overlap_y  (vertical)
+```
+
+For a 2048×2048 image at 20% overlap, that's a 410-pixel blend strip on each axis.
+
+## Chunked Processing
+
+For images larger than 2048px, SEAMS automatically:
+
+1. Splits the image into 1024×1024 tiles with 64px overlap
+2. Processes each tile independently
+3. Reassembles with linear gradient blending at tile boundaries
+4. Applies 2D corner fade: `fade = fade_y × fade_x` to eliminate corner artifacts
+
+<Note>
+Chunked processing runs automatically — there are no user controls for tile size or overlap. It triggers for any image where `max(width, height) > 2048`.
+</Note>
+
+## Live Preview
+
+As you adjust sliders, SEAMS runs a 3-stage progressive preview:
+
+| Stage | Trigger | Scale | Quality |
+|---|---|---|---|
+| Stage 1 | Immediate (0ms) | 12.5% | Rough instant feedback |
+| Stage 2 | 80ms debounce | 50% | Medium quality |
+| Stage 3 | 400ms debounce | 100% | Full resolution |
+
+Results are cached — changing a slider back to a previous value returns instantly from the LRU cache (up to 50 entries).

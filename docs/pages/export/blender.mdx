@@ -1,0 +1,67 @@
+---
+title: Blender
+description: Export PBR textures for Blender's Principled BSDF shader.
+---
+
+# Blender Export
+
+SEAMS exports textures optimized for Blender's Principled BSDF with OpenGL normal convention and automatic node setup script generation.
+
+## Blender Default Settings
+
+| Setting | Value |
+|---|---|
+| Workflow | Metallic/Roughness |
+| Normal Format | OpenGL (Y+) |
+| Format | PNG |
+| Bit Depth | 16-bit |
+| Color Management | Renderer Preset |
+
+## Blender-Specific Options
+
+All options default to **enabled**:
+
+| Option | Description |
+|---|---|
+| Generate Principled BSDF setup | Creates a Python script that sets up the shader node tree |
+| Auto node linking | Links texture nodes to Principled BSDF inputs automatically |
+| Cycles optimized | Settings tuned for Cycles path tracing |
+| Eevee compatible | Compatible with Eevee real-time renderer |
+| Non-color data assignment | Correctly marks linear maps as Non-Color data |
+| Height to displacement node setup | Connects height map through displacement node |
+
+## Node Setup Script
+
+When "Generate Principled BSDF setup" is enabled, a Python script is created:
+
+```
+MaterialName_BLENDER_nodes.py
+```
+
+Run this script in Blender's Text Editor to automatically:
+1. Create a new material with Principled BSDF
+2. Add Image Texture nodes for each map
+3. Link textures to the correct shader inputs
+4. Set Non-Color data for linear maps
+5. Set up displacement if height map is present
+
+<Note>
+The node setup script currently contains placeholder structure and map paths. Full node wiring logic is planned for a future update.
+</Note>
+
+## File Naming
+
+```
+MaterialName_BLENDER_BaseColor.png
+MaterialName_BLENDER_Normal.png
+MaterialName_BLENDER_Roughness.png
+MaterialName_BLENDER_Metallic.png
+MaterialName_BLENDER_AO.png
+MaterialName_BLENDER_Height.png
+```
+
+## Tips for Blender
+
+- Import textures as **Non-Color** (for Normal, Roughness, Metallic, AO, Height) or **sRGB** (for BaseColor, Emissive)
+- Enable **Displacement** in the material settings if using height maps with Cycles
+- For Eevee, displacement requires a bump node — the export script handles this

@@ -1,0 +1,76 @@
+---
+title: SEAMS — Seamless Texture Studio
+description: GPU-accelerated desktop app for creating seamless textures and PBR materials for 3D workflows.
+---
+
+<div style="display: flex; flex-direction: column; align-items: center; padding: 60px 20px 40px; text-align: center;">
+  <h1 class="gradient-text" style="font-size: 3.5rem; font-weight: 800; margin-bottom: 16px;">
+    SEAMS
+  </h1>
+  <p style="font-size: 1.25rem; color: var(--seams-text-secondary); max-width: 600px; margin-bottom: 32px;">
+    Create perfectly seamless textures and full PBR material sets from a single image. GPU-accelerated, production-ready, and built for 3D artists.
+  </p>
+  <div style="display: flex; gap: 12px; margin-bottom: 48px;">
+    <a href="/pages/getting-started" style="background: linear-gradient(135deg, #5b3dff, #31e6bd); color: white; padding: 12px 28px; border-radius: 8px; font-weight: 600; text-decoration: none;">
+      Get Started
+    </a>
+    <a href="/pages/quick-start" style="border: 1px solid #252d43; color: #e6e2f2; padding: 12px 28px; border-radius: 8px; font-weight: 600; text-decoration: none;">
+      Quick Start
+    </a>
+  </div>
+</div>
+
+---
+
+## Features
+
+<CardGroup cols={3}>
+  <Card title="Delighting" icon="sun" href="/pages/delight">
+    Remove directional lighting and shadows from photos to produce flat albedo/base color textures.
+  </Card>
+  <Card title="Seamless Processing" icon="repeat" href="/pages/seamless/overlap-blend">
+    Make any texture seamlessly tileable with Overlap Blend or Splat Synthesis methods.
+  </Card>
+  <Card title="PBR Material Lab" icon="palette" href="/pages/material-lab">
+    Generate 8 PBR maps (Normal, Roughness, Metallic, AO, Height, Displacement, Opacity, Emissive) from a single image.
+  </Card>
+  <Card title="3D PBR Viewport" icon="cube" href="/pages/viewport-3d">
+    Preview materials on 3D meshes with Cook-Torrance PBR shading, HDRI lighting, and real-time displacement.
+  </Card>
+  <Card title="Renderer Export" icon="download" href="/pages/export/pbr-export">
+    One-click export for Unreal Engine 5, Blender, V-Ray, Corona, and Generic PBR with auto material generation.
+  </Card>
+  <Card title="GPU Accelerated" icon="bolt" href="/pages/getting-started">
+    CUDA acceleration, Numba JIT compilation, and a Rust extension module for performance-critical paths.
+  </Card>
+</CardGroup>
+
+---
+
+## Why SEAMS?
+
+Traditional seamless texture tools either destroy edge details with Gaussian blur or require manual Photoshop work. SEAMS solves this with:
+
+- **Distance-based gradient blending** — Smooth falloff at seams without losing detail
+- **Splat synthesis** — Texture bombing for organic, non-repetitive patterns
+- **Chunked processing** — Automatic tiling for images over 2048px with corner artifact elimination
+- **Live preview** — 3-stage progressive preview at 12.5%, 50%, and 100% resolution
+- **Result caching** — LRU cache avoids redundant recomputation across parameter changes
+- **Auto-update** — SHA256-verified updates downloaded and applied on restart
+
+---
+
+## System Requirements
+
+| Requirement | Minimum | Recommended |
+|---|---|---|
+| **OS** | Windows 10 (64-bit) | Windows 11 |
+| **Python** | 3.12 | 3.12 |
+| **RAM** | 8 GB | 16 GB+ |
+| **GPU** | Any (CPU fallback) | NVIDIA with CUDA |
+| **OpenGL** | 2.1 | 4.5+ |
+| **Disk** | 500 MB | 1 GB+ |
+
+<Note>
+SEAMS runs on CPU only — no GPU is required. CUDA acceleration is optional and provides 3–5x speedup for heavy operations.
+</Note>

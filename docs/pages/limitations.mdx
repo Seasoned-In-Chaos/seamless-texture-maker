@@ -1,0 +1,72 @@
+---
+title: Limitations
+description: Known limitations and constraints in SEAMS.
+---
+
+# Limitations
+
+## Image Constraints
+
+| Constraint | Value |
+|---|---|
+| Minimum image size | 64 × 64 pixels |
+| Maximum image size | 8192 × 8192 pixels |
+| Maximum undo steps | 20 |
+| Maximum redo steps | 20 |
+| Maximum recent files | 10 |
+
+## Platform
+
+- **Windows only** — The auto-updater (batch-file swap) and single-instance mutex are Windows-specific
+- **No macOS or Linux support** — The app may run on other platforms but auto-update and mutex enforcement won't work
+
+## Theme
+
+- **Dark theme only** — There is no light mode option. The entire UI is built around the dark theme (`#07080c` background, purple-to-teal accents).
+
+## GPU Monitoring
+
+- **NVIDIA only** — The system monitor's GPU bar only appears when `nvidia-smi` is available. AMD and Intel GPUs are not supported for monitoring.
+
+## Splat Synthesis
+
+- **Fixed random seed (42)** — There is no user control for the seed. All Splat outputs are deterministic for the same input and parameters.
+- **Patch cache** — Rotated patch variations are cached with LRU eviction (max 8 entries). Changing rotation or scale requires patch regeneration.
+
+## 3D Viewport
+
+- **Only 3 meshes exposed** — Sphere, Cube, and Plane are available in the UI. Wall, Floor Tile, and Rounded Cube are built internally but not exposed.
+- **OpenGL 2.1 required** — The 3D viewport requires a compatibility profile OpenGL 2.1 context. This is not available on some virtual machines or remote desktop setups.
+
+## Material Lab
+
+- **Emissive "Custom" tint** — The "Custom" option is hard-coded to purple `(0.95, 0.55, 1.0)`. There is no color picker.
+- **PBR from grayscale only** — All PBR maps are derived from the grayscale luminance of the input image. There are no per-channel controls or color-aware map generation.
+
+## Export
+
+- **Padding/dilation not implemented** — The export dialog exposes padding options (0, 8, 16, 32px) but dilation processing is not implemented in the pipeline.
+- **Sidecar scripts are placeholders** — The auto-generated MaxScript (Corona/V-Ray), Python (Blender), and UE5 material instance files contain map paths and placeholder comments, not full material setup logic.
+- **Resolution resizes, not supersamples** — Selecting a higher resolution than the source upscales the image. It does not add detail.
+- **JPEG alpha stripped** — JPEG format does not support transparency. Alpha channels are automatically removed.
+
+## Delight
+
+- **Destructive apply** — Applying delight modifies the base image. The previous state is pushed to the undo stack (max 20 steps), but there is no non-destructive mode.
+- **Sliders reset after apply** — All delight sliders are reset to 0 after applying. To re-delight, you must re-adjust sliders.
+
+## Chunked Processing
+
+- **Not configurable** — Chunked processing (1024×1024 tiles with 64px overlap) automatically triggers for images >2048px. Users cannot change tile size or overlap.
+
+## Drag & Drop
+
+- **Limited formats** — Only `.png`, `.jpg`, `.jpeg`, `.tiff`, `.tif`, `.tga`, `.exr` are accepted. Other formats are silently rejected.
+
+## Float Image Handling
+
+- **NaN/Inf replacement** — NaN values are replaced with 0, Inf values are replaced with 1 or 0, silently on load. No warning is shown.
+
+## DPI Scaling
+
+- **PassThrough policy** — SEAMS uses `PassThrough` DPI rounding which respects native OS scaling. The `Round` policy (used previously) caused windows to overflow on 125% scaling. If you experience sizing issues, see [Troubleshooting](/pages/troubleshooting#window-too-large--off-screen).

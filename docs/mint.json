@@ -1,0 +1,94 @@
+{
+  "$schema": "https://mintlify.com/schema.json",
+  "name": "SEAMS",
+  "logo": {
+    "dark": "/images/logo.svg",
+    "light": "/images/logo.svg"
+  },
+  "favicon": "/images/favicon.ico",
+  "colors": {
+    "primary": "#5b3dff",
+    "light": "#31e6bd",
+    "dark": "#07080c",
+    "anchors": {
+      "from": "#5b3dff",
+      "to": "#31e6bd"
+    }
+  },
+  "topbarLinks": [
+    {
+      "name": "Download",
+      "url": "https://github.com/Seasoned-In-Chaos/seamless-texture-maker/releases/latest"
+    }
+  ],
+  "topbarCtaButton": {
+    "type": "github",
+    "url": "https://github.com/Seasoned-In-Chaos/seamless-texture-maker"
+  },
+  "tabs": [
+    {
+      "name": "Guides",
+      "url": "guides"
+    },
+    {
+      "name": "Export",
+      "url": "export"
+    },
+    {
+      "name": "Reference",
+      "url": "reference"
+    }
+  ],
+  "navigation": [
+    {
+      "group": "Getting Started",
+      "pages": [
+        "pages/index",
+        "pages/getting-started",
+        "pages/quick-start"
+      ]
+    },
+    {
+      "group": "Guides",
+      "pages": [
+        "pages/workspace",
+        "pages/delight",
+        {
+          "group": "Seamless Processing",
+          "pages": [
+            "pages/seamless/overlap-blend",
+            "pages/seamless/splat-synthesis"
+          ]
+        },
+        "pages/material-lab",
+        "pages/viewport-2d",
+        "pages/viewport-3d"
+      ]
+    },
+    {
+      "group": "Export",
+      "pages": [
+        "pages/export/quick-export",
+        "pages/export/pbr-export",
+        "pages/export/ue5",
+        "pages/export/blender",
+        "pages/export/corona",
+        "pages/export/vray"
+      ]
+    },
+    {
+      "group": "Reference",
+      "pages": [
+        "pages/keyboard-shortcuts",
+        "pages/settings",
+        "pages/auto-update",
+        "pages/troubleshooting",
+        "pages/limitations"
+      ]
+    }
+  ],
+  "footerSocials": {
+    "github": "https://github.com/Seasoned-In-Chaos/seamless-texture-maker"
+  },
+  "anchors": []
+}

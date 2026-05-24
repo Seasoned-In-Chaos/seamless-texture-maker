@@ -1,0 +1,72 @@
+---
+title: 2D Viewport
+description: Zoom, pan, compare, and tile your textures in the 2D viewer.
+---
+
+# 2D Viewport
+
+The 2D viewport is where you view and compare your textures. It supports before/after comparison, tiled preview, and multi-channel inspection.
+
+## Opening an Image
+
+- **File dialog**: Press `Ctrl+O` or click Import Texture in the navigation rail
+- **Drag-and-drop**: Drop a file onto the viewport (`.png`, `.jpg`, `.jpeg`, `.tiff`, `.tif`, `.tga`, `.exr`)
+- **Double-click**: When no image is loaded, double-click the viewport to open the file dialog
+
+## View Modes
+
+| Mode | Description |
+|---|---|
+| **Split** | Draggable vertical split handle with BEFORE/AFTER labels |
+| **Side by Side** | Two panels with a gap, BEFORE on left, AFTER on right |
+| **Single** | Full-width view of the processed result |
+
+Switch modes in the viewport toolbar.
+
+### Split View
+
+In Split mode, a draggable handle with `< >` grip divides the viewport. The left side shows the original image (BEFORE), and the right side shows the processed result (AFTER).
+
+## Tiled Preview
+
+Enable the **Tiled** toggle to see how your texture tiles:
+
+| Option | Layout |
+|---|---|
+| 2×2 | 4 tiles in a square grid |
+| 3×3 | 9 tiles |
+| 4×4 | 16 tiles |
+
+Dashed teal tile boundary guides show where each tile edge falls. This is essential for verifying seamless results.
+
+## Guides
+
+Toggle **Guides** on/off to show seam boundary indicators. Guides highlight where the offset cross-seam falls in the image.
+
+## Zoom & Pan
+
+| Action | Control |
+|---|---|
+| Zoom | Mouse scroll wheel (10%–unlimited, ~0.083% per tick) |
+| Pan | Left-click drag |
+| Fit to view | Press `Ctrl+0` or click the Fit button |
+
+The current zoom percentage is displayed in the toolbar.
+
+## Channel Dock
+
+A horizontal scrollable strip at the bottom shows 8 channel cards. Click a card to:
+- Isolate that channel in the 3D viewport (Studio Mode)
+- Display it in the 2D viewer
+- Toggle it on/off for export
+
+See [Material Lab](/pages/material-lab#channel-dock) for the full channel list.
+
+## Undo & Redo
+
+| Action | Shortcut | Stack Depth |
+|---|---|---|
+| Undo | `Ctrl+Z` | 20 steps |
+| Redo | `Ctrl+Y` | 20 steps |
+
+Each destructive action (image load, delight apply) pushes the current state to the undo stack and clears the redo stack. Undo restores the image, reloads the processor, and triggers a background full-resolution reprocess.

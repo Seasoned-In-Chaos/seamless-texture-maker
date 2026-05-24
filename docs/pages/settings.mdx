@@ -1,0 +1,61 @@
+---
+title: Settings
+description: Persistent configuration and settings file location.
+---
+
+# Settings
+
+SEAMS stores all persistent settings in a JSON file:
+
+```
+%APPDATA%\SeamlessTextureMaker\settings.json
+```
+
+## All Settings
+
+| Key | Default | Description |
+|---|---|---|
+| `blend_strength` | `0.5` | Seam blend strength |
+| `seam_smoothness` | `0.5` | Seam edge smoothness |
+| `detail_preservation` | `0.75` | Detail preservation factor |
+| `symmetric_blending` | `true` | Use symmetric blending |
+| `export_format` | `"png"` | Default export format |
+| `save_mode` | `"new_file"` | `"new_file"` or `"overwrite"` |
+| `last_directory` | `""` | Last used directory |
+| `last_file` | `""` | Last opened file |
+| `recent_files` | `[]` | Up to 10 recent file paths (filtered by existence) |
+| `active_tool` | `"home"` | Last active workspace mode |
+| `preview_tab` | `0` | Last selected preview tab |
+| `window_width` | `1200` | Restored window width |
+| `window_height` | `800` | Restored window height |
+| `window_geometry` | — | Hex-encoded geometry blob |
+| `method` | — | Last used seamless method |
+
+## When Settings Are Saved
+
+- On application close
+- When selecting an export directory
+- When opening a file
+- When changing workspace mode
+
+## Reset Settings
+
+To reset all settings to defaults:
+
+1. Close SEAMS
+2. Delete the settings file: `del "%APPDATA%\SeamlessTextureMaker\settings.json"`
+3. Launch SEAMS — defaults will be recreated
+
+<Warning>
+If you experience window sizing issues (window too large, can't resize, window off-screen), delete just the `window_geometry` key from the JSON file while SEAMS is closed. This preserves all other settings while fixing the window position.
+</Warning>
+
+## Numba Cache
+
+JIT-compiled functions are cached at:
+
+```
+%APPDATA%\SeamlessTextureMaker\numba_cache
+```
+
+This cache speeds up subsequent launches. It's safe to delete — functions will be recompiled on next launch.

@@ -1,0 +1,43 @@
+:root {
+  --seams-bg: #07080c;
+  --seams-surface: #0d0f16;
+  --seams-border: #1b2132;
+  --seams-border-light: #252d43;
+  --seams-purple: #5b3dff;
+  --seams-teal: #31e6bd;
+  --seams-purple-light: #8f70ff;
+  --seams-text-primary: #e6e2f2;
+  --seams-text-secondary: #737891;
+  --seams-text-muted: #8c91a8;
+}
+
+.dark {
+  --bg-color: var(--seams-bg);
+}
+
+.gradient-text {
+  background: linear-gradient(135deg, var(--seams-purple), var(--seams-teal));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.gradient-border {
+  border-image: linear-gradient(135deg, var(--seams-purple), var(--seams-teal)) 1;
+}
+
+.gradient-bg {
+  background: linear-gradient(135deg, var(--seams-purple), var(--seams-teal));
+}
+
+.seams-card {
+  background: var(--seams-surface);
+  border: 1px solid var(--seams-border);
+  border-radius: 12px;
+  padding: 24px;
+}
+
+.seams-card:hover {
+  border-color: var(--seams-purple);
+  box-shadow: 0 0 20px rgba(91, 61, 255, 0.15);
+}
