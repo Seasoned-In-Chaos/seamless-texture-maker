@@ -53,13 +53,9 @@ jobs:
         shell: cmd
         run: |
           call .venv-build\Scripts\activate.bat
-          set PYO3_PYTHON=.venv-build\Scripts\python.exe
+          set PYO3_PYTHON=%VIRTUAL_ENV%\Scripts\python.exe
           cd seams_core
-          cargo build --release --manifest-path Cargo.toml
-          if exist target\release\seams_core.dll (
-            copy /y target\release\seams_core.dll target\release\seams_core.pyd
-            python -c "import shutil, pathlib; sp=pathlib.Path('%VIRTUAL_ENV%','Lib','site-packages'); sp.mkdir(exist_ok=True); shutil.copy('target/release/seams_core.pyd', sp/'seams_core.pyd'); print('Installed seams_core.pyd')"
-          )
+          maturin develop --release --strip
           cd ..
           python -c "from seams_core import edge_blend_symmetric; print('seams_core: VERIFIED OK')" 2>nul || echo [WARNING] seams_core not available, continuing with Numba fallback
 
