@@ -12,7 +12,8 @@ from .materialize_methods import synthesis_overlap, synthesis_splat
 from .inpainting import smart_seam_inpaint
 from .delighting import delight_image
 from .gpu_utils import GPUAccelerator, is_cuda_available
-from .cache import ResultCache, hash_image
+from .cache import ResultCache, hash_image, make_pipeline_key
+from .exceptions import ProcessingError, ImageLoadError
 
 class SeamlessProcessor:
     """
@@ -99,10 +100,31 @@ class SeamlessProcessor:
         
         Args:
             image: numpy array (BGR format) or path string
+            
+        Raises:
+            ImageLoadError: If the image is invalid.
         """
         if isinstance(image, str):
             self._original_image = cv2.imread(image, cv2.IMREAD_UNCHANGED)
+            if self._original_image is None:
+                raise ImageLoadError(f"Failed to read image: {image}")
         else:
+            # Input validation
+            if not isinstance(image, np.ndarray):
+                raise ImageLoadError(f"Expected ndarray, got {type(image).__name__}")
+            if image.size == 0:
+                raise ImageLoadError("Image is empty")
+            h, w = image.shape[:2]
+            if h < 64 or w < 64:
+                raise ImageLoadError(f"Image too small: {w}x{h} (minimum 64x64)")
+            if h > 8192 or w > 8192:
+                raise ImageLoadError(f"Image too large: {w}x{h} (maximum 8192x8192)")
+            # Check for NaN/Inf
+            if np.issubdtype(image.dtype, np.floating):
+                if not np.all(np.isfinite(image)):
+                    import logging
+                    logging.getLogger("seams").warning("Image contains NaN/Inf, replacing with 0")
+                    image = np.nan_to_num(image, nan=0.0, posinf=1.0, neginf=0.0)
             self._original_image = image.copy()
         
         self._processed_image = None
@@ -124,7 +146,8 @@ class SeamlessProcessor:
              else:
                  self._preview_image = self._original_image.copy()
     
-    def process(self, image=None, preview=False, params=None):
+    def process(self, image=None, preview=False, params=None, use_cache: bool = True,
+                chunked: bool = True):
         """
         Process the image to create a seamless texture with caching.
         
@@ -132,6 +155,8 @@ class SeamlessProcessor:
             image: Optional input image. If None, uses previously loaded image.
             preview (bool): If True, process at lower resolution for speed.
             params (dict): Optional parameter overrides.
+            use_cache (bool): If True, check/store result in cache (default True).
+            chunked (bool): If True, auto-select chunked path for large images.
         
         Returns:
             Processed seamless texture
@@ -143,12 +168,20 @@ class SeamlessProcessor:
             self.load_image(image)
         
         if self._original_image is None:
-            raise ValueError("No image loaded. Call load_image() first.")
+            raise ProcessingError("No image loaded. Call load_image() first.")
         
-        # Check cache first (for preview mode)
-        if preview and self._image_hash:
-            cache_params = self._get_cache_params()
-            cached_result = self._cache.get(cache_params, self._image_hash)
+        # Auto-select chunked path for large images
+        h, w = self._original_image.shape[:2]
+        if chunked and not preview and max(h, w) > 2048:
+            return self.run_pipeline_chunked(self._original_image, chunk_size=1024, overlap=64)
+        
+        # Check cache (both preview and full-res when use_cache is True)
+        if use_cache and self._image_hash:
+            cache_key = make_pipeline_key(
+                self._preview_image if preview else self._original_image,
+                self._get_cache_params(),
+            )
+            cached_result = self._cache.get_pipeline(cache_key)
             if cached_result is not None:
                 return cached_result
         
@@ -174,10 +207,13 @@ class SeamlessProcessor:
         else:  # overlap (default)
             result = self._process_overlap(img)
         
-        # Cache preview results
-        if preview and self._image_hash:
-            cache_params = self._get_cache_params()
-            self._cache.set(cache_params, result, self._image_hash)
+        # Cache result (both preview and full-res when use_cache is True)
+        if use_cache and self._image_hash:
+            cache_key = make_pipeline_key(
+                self._preview_image if preview else self._original_image,
+                self._get_cache_params(),
+            )
+            self._cache.set_pipeline(cache_key, result)
         
         return result
     
@@ -485,6 +521,121 @@ class SeamlessProcessor:
     @property
     def gpu_available(self):
         return self.use_gpu
+
+    def run_pipeline_chunked(self, img: 'np.ndarray', chunk_size: int = 1024,
+                              overlap: int = 64, **kwargs) -> 'np.ndarray':
+        """Process large images in overlapping tiles to avoid OOM.
+
+        Splits the image into (chunk_size x chunk_size) tiles with *overlap*
+        pixels of overlap on each edge, processes each tile through the
+        standard pipeline, then reassembles with linear gradient blending
+        over the overlap zone.
+
+        Falls back to :meth:`process` directly for images <= 2048px.
+        """
+        import logging
+        import time
+        logger = logging.getLogger("seams.chunked")
+
+        h, w = img.shape[:2]
+
+        if max(h, w) <= 2048:
+            return self.process(image=img, preview=False, chunked=False, **kwargs)
+
+        t0 = time.perf_counter()
+        result = img.copy()
+        c = img.shape[2] if img.ndim == 3 else 1
+
+        # Compute tile positions
+        tiles_y = list(range(0, h, chunk_size))
+        tiles_x = list(range(0, w, chunk_size))
+
+        total_tiles = len(tiles_y) * len(tiles_x)
+        logger.info("Chunked processing: %dx%d → %d tiles (chunk=%d, overlap=%d)",
+                     w, h, total_tiles, chunk_size, overlap)
+
+        tile_idx = 0
+        for y0 in tiles_y:
+            for x0 in tiles_x:
+                tile_idx += 1
+                y1 = min(y0 + chunk_size + overlap, h)
+                x1 = min(x0 + chunk_size + overlap, w)
+                # Also expand backwards for overlap
+                y_start = max(0, y0 - overlap)
+                x_start = max(0, x0 - overlap)
+
+                tile = img[y_start:y1, x_start:x1].copy()
+
+                t_tile = time.perf_counter()
+                tile_processor = SeamlessProcessor()
+                tile_processor.set_parameters(**self._get_cache_params())
+                tile_processor.load_image(tile)
+                processed = tile_processor.process(preview=False, chunked=False)
+                tile_ms = (time.perf_counter() - t_tile) * 1000.0
+                logger.debug("  tile %d/%d: %dms", tile_idx, total_tiles, int(tile_ms))
+
+                # Compute blend weights for overlap regions
+                th, tw = processed.shape[:2]
+                fade_y = np.linspace(0, 1, min(overlap, th)).astype(np.float32)
+                fade_x = np.linspace(0, 1, min(overlap, tw)).astype(np.float32)
+
+                if y_start > 0 and x_start > 0:
+                    # 2D corner: multiply y and x fades for proper blending
+                    fy2 = fade_y[:, np.newaxis, np.newaxis] if img.ndim == 3 else fade_y[:, np.newaxis]
+                    fx2 = fade_x[np.newaxis, :, np.newaxis] if img.ndim == 3 else fade_x[np.newaxis, :]
+                    corner_h = min(len(fade_y), th)
+                    corner_w = min(len(fade_x), tw)
+                    w2d = fy2[:corner_h] * fx2[:corner_w]
+                    orig_corner = result[y_start:y_start + corner_h, x_start:x_start + corner_w]
+                    processed[:corner_h, :corner_w] = (processed[:corner_h, :corner_w] * w2d +
+                                                        orig_corner * (1 - w2d))
+                    # Remaining y-edge (past x overlap)
+                    if corner_w < len(fade_y):
+                        y_remain = fade_y[corner_w:]
+                        if img.ndim == 3:
+                            yr = y_remain[:, np.newaxis, np.newaxis]
+                        else:
+                            yr = y_remain[:, np.newaxis]
+                        r_end = min(y_start + len(y_remain), y_start + th)
+                        p_end = min(len(y_remain), th)
+                        processed[:p_end, corner_w:] = (
+                            processed[:p_end, corner_w:] * yr[:p_end] +
+                            result[y_start:y_start + p_end, x_start + corner_w:x1] * (1 - yr[:p_end])
+                        )
+                    # Remaining x-edge (past y overlap)
+                    if corner_h < len(fade_x):
+                        x_remain = fade_x[corner_h:]
+                        if img.ndim == 3:
+                            xr = x_remain[np.newaxis, :, np.newaxis]
+                        else:
+                            xr = x_remain[np.newaxis, :]
+                        p_end = min(len(x_remain), tw)
+                        processed[corner_h:, :p_end] = (
+                            processed[corner_h:, :p_end] * xr[:p_end] +
+                            result[y_start + corner_h:y1, x_start:x_start + p_end] * (1 - xr[:p_end])
+                        )
+                elif y_start > 0:
+                    if img.ndim == 3:
+                        fade = fade_y[:, np.newaxis, np.newaxis]
+                    else:
+                        fade = fade_y[:, np.newaxis]
+                    processed[:len(fade)] = (processed[:len(fade)] * fade +
+                                              result[y_start:y_start + len(fade), x_start:x1] * (1 - fade))
+
+                elif x_start > 0:
+                    if img.ndim == 3:
+                        fade = fade_x[np.newaxis, :, np.newaxis]
+                    else:
+                        fade = fade_x[np.newaxis, :]
+                    processed[:, :len(fade)] = (processed[:, :len(fade)] * fade +
+                                                 result[y_start:y1, x_start:x_start + len(fade)] * (1 - fade))
+
+                # Write tile into result
+                result[y_start:y1, x_start:x1] = processed
+
+        total_ms = (time.perf_counter() - t0) * 1000.0
+        logger.info("Chunked processing done: %.0f ms, %d tiles", total_ms, total_tiles)
+        return result
 
 
 def make_seamless(image, blend_strength=0.5, seam_smoothness=0.5, 

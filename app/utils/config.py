@@ -12,7 +12,7 @@ logger = get_logger(__name__)
 
 # Application info
 APP_NAME = "seams"
-APP_VERSION = "2.0.0"
+APP_VERSION = "3.0.0"
 APP_AUTHOR = "Shubham Panchasara"
 
 # Default settings

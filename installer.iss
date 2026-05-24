@@ -1,11 +1,9 @@
 #define MyAppName "Seamless Texture Maker"
-#define MyAppVersion "2.0.0"
+#define MyAppVersion "3.0.0"
 #define MyAppPublisher "Shubham Panchasara"
 #define MyAppExeName "SEAMS.exe"
 
 [Setup]
-; NOTE: The value of AppId uniquely identifies this application.
-; Do not use the same AppId value in installers for other applications.
 AppId={{DA6FB758-C976-4700-ADC3-6B1DF8D279E4}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
@@ -15,13 +13,17 @@ DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
 OutputDir=dist
-OutputBaseFilename=SEAMS_Setup
+OutputBaseFilename=SEAMS_Setup_{#MyAppVersion}
 SetupIconFile=resources\icon.ico
 Compression=lzma
 SolidCompression=yes
-ArchitecturesInstallIn64BitMode=x64
+ArchitecturesInstallIn64BitMode=x64compatible
+ArchitecturesAllowed=x64compatible
 UninstallDisplayIcon={app}\icon.ico
 SetupLogging=yes
+VersionInfoVersion={#MyAppVersion}
+PrivilegesRequired=admin
+WizardStyle=modern
 
 [InstallDelete]
 Type: files; Name: "{app}\SeamlessTextureMaker.exe"
@@ -43,6 +45,26 @@ Name: "{autodesktop}\SEAMS"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopic
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
+
+[Code]
+procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  DataDir: string;
+begin
+  if CurUninstallStep = usPostUninstall then
+  begin
+    DataDir := ExpandConstant('{appdata}\SeamlessTextureMaker');
+    if DirExists(DataDir) then
+    begin
+      if MsgBox(
+        'Do you want to delete your SEAMS user data (settings, logs, cache)?',
+        mbConfirmation, MB_YESNO) = IDYES then
+      begin
+        DelTree(DataDir, True, True, True);
+      end;
+    end;
+  end;
+end;
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}"

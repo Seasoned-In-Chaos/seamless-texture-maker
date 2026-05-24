@@ -1,0 +1,92 @@
+name: Build and Release SEAMS
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Rust stable (MSVC)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/registry
+          key: cargo-${{ hashFiles('seams_core/Cargo.lock') }}
+          restore-keys: cargo-
+
+      - name: Cache Python venv
+        uses: actions/cache@v4
+        with:
+          path: .venv-build
+          key: venv-${{ runner.os }}-py312-${{ hashFiles('requirements.txt') }}
+          restore-keys: venv-${{ runner.os }}-py312-
+
+      - name: Create build venv and install dependencies
+        run: |
+          python -m venv .venv-build
+          call .venv-build\Scripts\activate.bat
+          python -m pip install --quiet --upgrade pip
+          pip install --quiet -r requirements.txt
+          pip install --quiet maturin pyinstaller packaging
+
+      - name: Build Rust extension
+        run: |
+          call .venv-build\Scripts\activate.bat
+          set PYO3_PYTHON=.venv-build\Scripts\python.exe
+          cd seams_core
+          cargo build --release --manifest-path Cargo.toml
+          if exist target\release\seams_core.dll (
+            copy /y target\release\seams_core.dll target\release\seams_core.pyd
+            python -c "import shutil, pathlib; sp=pathlib.Path('%VIRTUAL_ENV%','Lib','site-packages'); sp.mkdir(exist_ok=True); shutil.copy('target/release/seams_core.pyd', sp/'seams_core.pyd'); print('Installed seams_core.pyd')"
+          )
+          cd ..
+          python -c "from seams_core import edge_blend_symmetric; print('seams_core: VERIFIED OK')" 2>nul || echo [WARNING] seams_core not available, continuing with Numba fallback
+
+      - name: Install UPX
+        run: |
+          choco install upx --yes
+
+      - name: Build with PyInstaller
+        run: |
+          call .venv-build\Scripts\activate.bat
+          where upx >nul 2>&1 && for /f "tokens=*" %%u in ('where upx') do set "UPX=%%u"
+          python -m PyInstaller build.spec --clean --noconfirm
+
+      - name: Build installer with Inno Setup
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: innosetup-innosetup@v1
+        with:
+          path: installer.iss
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SEAMS-windows
+          path: dist/
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/SEAMS_Setup*.exe
+            dist/SEAMS.exe
+          name: SEAMS v${{ github.ref_name }}
+          generate_release_notes: true

@@ -1,6 +1,39 @@
-﻿__pycache__/
+﻿# Python
+__pycache__/
 *.pyc
+*.pyo
+*.pyd
 .venv/
-bfg.jar
+.venv-build/
+*.egg-info/
+
+# Rust / Cargo
+seams_core/target/
+seams_core/Cargo.lock
+
+# Build output
 dist/
 build/
+
+# MSIX staging
+store/SEAMS/
+store/*.msix
+
+# IDE / OS
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Logs
+output.log
+*.log
+
+# PyInstaller
+*.spec.bak
+
+# Temp / scratch
+scratch/

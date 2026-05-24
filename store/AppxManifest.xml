@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap10="http://schemas.microsoft.com/appx/manifest/uap/windows10/10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities">
+
+  <Identity
+    Name="SeamsStudio.SeamlessTextureMaker"
+    Version="3.0.0.0"
+    Publisher="CN=Harsh Vasudeva, O=Harsh Vasudeva, C=US"
+    ProcessorArchitecture="x64" />
+
+  <Properties>
+    <DisplayName>SEAMS - Seamless Texture Maker</DisplayName>
+    <PublisherDisplayName>Harsh Vasudeva</PublisherDisplayName>
+    <Description>Create seamless textures from any image with advanced blending algorithms, PBR material generation, and real-time preview.</Description>
+    <Logo>images\StoreLogo.png</Logo>
+  </Properties>
+
+  <Resources>
+    <Resource Language="en-us" />
+  </Resources>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.14316.0" MaxVersionTested="10.0.22631.0" />
+  </Dependencies>
+
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+
+  <Applications>
+    <Application Id="SEAMS"
+      Executable="SEAMS\SEAMS.exe"
+      uap10:RuntimeBehavior="packagedClassicApp"
+      uap10:TrustLevel="mediumIL">
+      <uap:VisualElements
+        DisplayName="SEAMS"
+        Description="Seamless Texture Maker"
+        Square150x150Logo="images\Square150x150Logo.png"
+        Square44x44Logo="images\Square44x44Logo.png"
+        BackgroundColor="#080810" />
+    </Application>
+  </Applications>
+</Package>

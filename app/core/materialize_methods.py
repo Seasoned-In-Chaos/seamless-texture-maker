@@ -1,10 +1,15 @@
 """
 Seamless texture generation using Materialize-inspired techniques.
 Includes Overlap and Splat methods.
+
+All functions accept and return float32 arrays.
 """
+from __future__ import annotations
+
 import numpy as np
 import cv2
 from .gpu_utils import GPUAccelerator, is_cuda_available
+from .assertions import assert_float32
 
 
 def create_falloff_mask(shape, falloff=0.2, circular=False):
@@ -57,31 +62,29 @@ def create_falloff_mask(shape, falloff=0.2, circular=False):
     return mask.astype(np.float32)
 
 
-def synthesis_overlap(image, overlap_x=0.2, overlap_y=0.2, falloff=0.5):
+def synthesis_overlap(image: np.ndarray, overlap_x: float = 0.2,
+                      overlap_y: float = 0.2,
+                      falloff: float = 0.5) -> np.ndarray:
+    """Create seamless texture using tile overlap method with resizing.
+
+    Accepts and returns float32 arrays.
     """
-    Create seamless texture using tile overlap method with resizing.
-    1. Overlaps the right edge onto the left edge (Left-to-Right).
-    2. Overlaps bottom edge onto top edge.
-    3. Crops the seamless result and resizes back to original.
-    """
+    assert_float32(image, "synthesis_overlap image")
     h, w = image.shape[:2]
 
-    # Needs float for blending
-    img_f = image.astype(np.float32)
+    img_f = image.copy()
 
-    # --- X Pass ---
     if overlap_x > 0:
         blend_w = int(w * overlap_x)
         if blend_w > 0:
-            # Create gradient 1 -> 0
             t = np.linspace(1, 0, blend_w)
 
             hardness = 1.0 / (max(0.001, falloff))
             t = (t - 0.5) * hardness + 0.5
             t = np.clip(t, 0, 1)
 
-            t = t[np.newaxis, :]  # (1, blend_w)
-            if len(image.shape) == 3:
+            t = t[np.newaxis, :]
+            if image.ndim == 3:
                 t = t[:, :, np.newaxis]
 
             left_strip = img_f[:, 0:blend_w]
@@ -93,7 +96,6 @@ def synthesis_overlap(image, overlap_x=0.2, overlap_y=0.2, falloff=0.5):
             new_w = w - blend_w
             img_f = img_f[:, 0:new_w]
 
-    # --- Y Pass ---
     h_curr, w_curr = img_f.shape[:2]
 
     if overlap_y > 0:
@@ -106,8 +108,8 @@ def synthesis_overlap(image, overlap_x=0.2, overlap_y=0.2, falloff=0.5):
             t = (t - 0.5) * hardness + 0.5
             t = np.clip(t, 0, 1)
 
-            t = t[:, np.newaxis]  # (blend_h, 1)
-            if len(image.shape) == 3:
+            t = t[:, np.newaxis]
+            if image.ndim == 3:
                 t = t[:, :, np.newaxis]
 
             top_strip = img_f[0:blend_h, :]
@@ -119,43 +121,35 @@ def synthesis_overlap(image, overlap_x=0.2, overlap_y=0.2, falloff=0.5):
             new_h = h_curr - blend_h
             img_f = img_f[0:new_h, :]
 
-    # --- Final Resize ---
     result = cv2.resize(img_f, (w, h), interpolation=cv2.INTER_LINEAR)
 
-    return np.clip(result, 0, 255).astype(image.dtype)
+    return np.clip(result, 0, 255)
 
 
 from .materialize_methods_jit import synthesis_splat_jit
 
 
-def synthesis_splat(image, new_size=(1024, 1024),
-                    grid_size=8, scale=1.0,
-                    rotation=0, rand_rot=0,
-                    wobble=0.2, falloff=0.2,
+def synthesis_splat(image: np.ndarray, new_size: tuple = (1024, 1024),
+                    grid_size: int = 8, scale: float = 1.0,
+                    rotation: float = 0, rand_rot: float = 0,
+                    wobble: float = 0.2, falloff: float = 0.2,
                     cached_batches=None):
-    """
-    Create seamless texture using splatting (Texture Bombing).
-    Optimized with Numba JIT.
+    """Create seamless texture using splatting (Texture Bombing).
 
-    Key fixes:
-    - Grid density automatically scales with patch size to avoid coverage gaps.
-    - Wrapping handles patches larger than the canvas (multi-tile wrapping).
-    - Falloff mask ensures clean blending with no harsh seam lines.
+    Accepts float32 input and returns float32 output.
 
     Args:
-        cached_batches: Tuple (patches_arr, masks_arr, patch_hw) or None
+        cached_batches: Tuple (patches_arr, masks_arr) or None
     Returns:
         (result_image, (patches_arr, masks_arr))
     """
+    assert_float32(image, "synthesis_splat image")
     target_h, target_w = new_size
     h, w = image.shape[:2]
 
-    # 1. Initialize canvas from a tiled, quarter-offset source image.
-    # This eliminates seam lines at uncovered pixels — every pixel starts
-    # with real texture content rather than a flat mean-color block.
-    img_f = image.astype(np.float32)
-    if len(img_f.shape) == 2:
-        img_f = img_f[:, :, np.newaxis]  # treat grayscale as 1-channel
+    img_f = image.copy()
+    if img_f.ndim == 2:
+        img_f = img_f[:, :, np.newaxis]
     h_src, w_src = img_f.shape[:2]
     # Create a 2x2 tile of the source, then crop to target size with a quarter offset
     tiled_2x = np.tile(img_f, (2, 2, 1))
@@ -243,11 +237,11 @@ def synthesis_splat(image, new_size=(1024, 1024),
                 p = base_patch.copy()
                 m = base_mask.copy()
 
-            patches.append(p.astype(np.float32))
-            masks.append(m.astype(np.float32))
+            patches.append(p)
+            masks.append(m)
 
-        patches_arr = np.array(patches)  # (N, H, W, C)
-        masks_arr = np.array(masks)       # (N, H, W, 1)
+        patches_arr = np.array(patches)
+        masks_arr = np.array(masks)
 
     # 3. Coordinate Generation
     # KEY FIX: scale the grid density so patches always cover the canvas.
@@ -311,4 +305,4 @@ def synthesis_splat(image, new_size=(1024, 1024),
         target_w
     )
 
-    return np.clip(result, 0, 255).astype(np.uint8), (patches_arr, masks_arr)
+    return np.clip(result, 0, 255), (patches_arr, masks_arr)

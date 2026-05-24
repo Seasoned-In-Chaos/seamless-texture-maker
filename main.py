@@ -6,6 +6,7 @@ app_dir = os.path.dirname(os.path.abspath(__file__))
 if app_dir not in sys.path:
     sys.path.insert(0, app_dir)
 os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")
+os.environ.setdefault("NUMBA_CACHE_DIR", os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "SeamlessTextureMaker", "numba_cache"))
 
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon, QSurfaceFormat

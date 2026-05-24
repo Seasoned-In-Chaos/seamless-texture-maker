@@ -1,0 +1,21 @@
+[package]
+name = "seams_core"
+version = "1.0.0"
+edition = "2021"
+
+[lib]
+name = "seams_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.21", features = ["extension-module"] }
+numpy = "0.21"
+ndarray = { version = "0.15", features = ["rayon"] }
+rayon = "1.10"
+rand = "0.8"
+rand_pcg = "0.3"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

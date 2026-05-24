@@ -52,6 +52,21 @@ def setup_logging() -> logging.Logger:
     if qInstallMessageHandler is not None:
         qInstallMessageHandler(_qt_message_handler)
 
+    # Log system info once at startup
+    try:
+        import sys
+        import numpy as np
+        import cv2
+        logger.info("Python %s", sys.version)
+        logger.info("NumPy %s", np.__version__)
+        logger.info("OpenCV %s", cv2.__version__)
+        try:
+            logger.info("OpenCV CUDA: %d devices", cv2.cuda.getCudaEnabledDeviceCount())
+        except Exception:
+            logger.info("OpenCV CUDA: not available")
+    except Exception:
+        pass
+
     return logger
 
 

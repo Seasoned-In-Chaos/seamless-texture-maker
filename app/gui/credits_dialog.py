@@ -5,14 +5,15 @@ from __future__ import annotations
 import os
 
 from PyQt6.QtCore import QRect, QRectF, QSize, Qt, QUrl
-from PyQt6.QtGui import QDesktopServices, QGuiApplication, QPainter, QPixmap
-from PyQt6.QtWidgets import QDialog, QPushButton, QWidget
+from PyQt6.QtGui import QDesktopServices, QGuiApplication, QPainter, QPixmap, QFont, QColor, QPen
+from PyQt6.QtWidgets import QDialog, QPushButton, QWidget, QHBoxLayout, QLabel, QVBoxLayout
 
 
 POSTER_SIZE = QSize(1536, 1024)
 STUDIO_URL = "https://studiotrivima.in"
 LINKEDIN_URL = "https://linkedin.com/in/shubham-panchasara-4416b023a"
 INSTAGRAM_URL = "https://instagram.com/panchasarashubham"
+HARSH_GITHUB_URL = "https://github.com/harshvasudeva"
 
 
 def _resource(path: str) -> str:
@@ -35,6 +36,9 @@ class _CreditsPoster(QWidget):
         self._add_hotspot(QRect(1092, 824, 360, 31), lambda: self._open(LINKEDIN_URL))
         self._add_hotspot(QRect(1092, 860, 320, 31), lambda: self._open(INSTAGRAM_URL))
 
+        self._contributor_rect = QRect(80, 950, 600, 55)
+        self._add_hotspot(self._contributor_rect, lambda: self._open(HARSH_GITHUB_URL))
+
     def sizeHint(self) -> QSize:  # noqa: N802
         return self._image_size
 
@@ -49,6 +53,34 @@ class _CreditsPoster(QWidget):
             return
 
         painter.drawPixmap(self._poster_rect(), self._pixmap, QRectF(self._pixmap.rect()))
+        self._draw_contributor_overlay(painter)
+
+    def _draw_contributor_overlay(self, painter: QPainter):
+        target = self._poster_rect()
+        sx = target.width() / self._image_size.width()
+        sy = target.height() / self._image_size.height()
+
+        cx = target.x() + self._contributor_rect.x() * sx
+        cy = target.y() + self._contributor_rect.y() * sy
+        fs = max(8, int(11 * min(sx, sy)))
+
+        f = QFont("Segoe UI", fs, QFont.Weight.Normal)
+        f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.5)
+        painter.setFont(f)
+
+        painter.setPen(QColor(140, 135, 160, 200))
+        painter.drawText(QRectF(cx, cy, 500 * sx, 22 * sy), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop, "Contributors")
+
+        fl = QFont("Segoe UI", fs, QFont.Weight.Bold)
+        fl.setUnderline(True)
+        painter.setFont(fl)
+        painter.setPen(QColor(160, 80, 255, 220))
+        painter.drawText(QRectF(cx, cy + 24 * sy, 400 * sx, 22 * sy), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop, "Harsh Vasudeva")
+
+        fd = QFont("Segoe UI", max(7, int(9 * min(sx, sy))))
+        painter.setFont(fd)
+        painter.setPen(QColor(120, 115, 140, 180))
+        painter.drawText(QRectF(cx + 220 * sx, cy + 26 * sy, 350 * sx, 18 * sy), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop, "[ Optimization & Production Readiness ]")
 
     def resizeEvent(self, event):  # noqa: N802
         super().resizeEvent(event)
@@ -90,7 +122,7 @@ class _CreditsPoster(QWidget):
         QDesktopServices.openUrl(QUrl(url))
 
 
-def show_credits(parent, app_version="2.0.0"):
+def show_credits(parent, app_version="3.0.0"):
     del app_version
 
     dialog = QDialog(parent)

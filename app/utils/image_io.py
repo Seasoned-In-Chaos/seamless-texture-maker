@@ -361,3 +361,58 @@ def _coerce_image_for_save(image):
     if image.dtype == np.uint16:
         return (image / 257).astype(np.uint8)
     return np.clip(image, 0, 255).astype(np.uint8)
+
+
+def load_as_float32(path: str) -> np.ndarray:
+    """Load image and convert to float32 RGB in [0, 1] range.
+
+    This is the **canonical entry point** for the processing pipeline.
+    All core/ functions operate on float32 arrays; uint8 conversion
+    happens only at save time via ``save_from_float32``.
+
+    Args:
+        path: Filesystem path to the image.
+
+    Returns:
+        float32 ndarray of shape (H, W, 3) with values in [0.0, 1.0].
+    """
+    image_bgr, _meta = load_image(path)
+    if image_bgr.ndim == 2:
+        image_bgr = cv2.cvtColor(image_bgr, cv2.COLOR_GRAY2BGR)
+    if image_bgr.shape[2] == 4:
+        image_bgr = cv2.cvtColor(image_bgr, cv2.COLOR_BGRA2BGR)
+    image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
+    return image_rgb.astype(np.float32) / 255.0
+
+
+def save_from_float32(
+    arr: np.ndarray,
+    path: str,
+    dpi: int = 72,
+) -> None:
+    """Save a float32 [0, 1] RGB array to disk.
+
+    This is the **canonical exit point** for the processing pipeline.
+    Converts float32 -> uint8 and RGB -> BGR for PIL/OpenCV.
+
+    Args:
+        arr: float32 ndarray, shape (H, W, 3) or (H, W), values [0.0, 1.0].
+        path: Output file path (extension determines format).
+        dpi: DPI metadata to embed (default 72).
+    """
+    if arr.dtype == np.float32 or np.issubdtype(arr.dtype, np.floating):
+        uint8 = np.clip(arr * 255.0, 0, 255).astype(np.uint8)
+    else:
+        uint8 = arr.astype(np.uint8)
+
+    meta = ImageMetadata()
+    meta.dpi = (dpi, dpi)
+
+    if uint8.ndim == 3 and uint8.shape[2] == 3:
+        uint8_bgr = cv2.cvtColor(uint8, cv2.COLOR_RGB2BGR)
+    elif uint8.ndim == 2:
+        uint8_bgr = uint8
+    else:
+        uint8_bgr = uint8
+
+    save_image(uint8_bgr, path, metadata=meta)

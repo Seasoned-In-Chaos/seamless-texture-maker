@@ -1,7 +1,14 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-PyInstaller spec file for SEAMS v3.0.
-Build command: pyinstaller build.spec --clean
+PyInstaller spec for Microsoft Store (MSIX) build.
+
+Produces an onedir (folder) layout instead of a single EXE,
+which is required for MSIX packaging.  The onedir layout lets
+MSIX properly catalog each file and avoids the self-extraction
+issues that onefile mode causes inside the Store container.
+
+Build command:
+  pyinstaller build_store.spec --clean
 """
 
 import sys
@@ -39,18 +46,16 @@ binaries += collect_dynamic_libs('llvmlite')
 hiddenimports += filtered_submodules('numba')
 hiddenimports += filtered_submodules('llvmlite')
 
-# PyQt6: PyInstaller hooks (hook-PyQt6.QtCore.py etc.) automatically
-# collect the necessary .pyd extension modules and Qt6/bin DLLs
-# when the modules are listed in hiddenimports.  Do NOT use
-# collect_data_files/collect_dynamic_libs on PyQt6 — they pull in
-# everything including unused submodules.
-
-try:
-    hiddenimports += collect_submodules('seams_core')
-except Exception:
-    pass
+# PyQt6: PyInstaller hooks automatically collect the necessary .pyd
+# and Qt6/bin DLLs from hiddenimports.  Do NOT use collect_data_files
+# or collect_dynamic_libs on PyQt6 — they pull in unused submodules.
 
 datas.append(('resources', 'resources'))
+
+rust_pyd = spec_dir / 'seams_core' / 'target' / 'release'
+if rust_pyd.exists():
+    for pyd_file in rust_pyd.glob('*.pyd'):
+        binaries.append((str(pyd_file), '.'))
 
 a = Analysis(
     ['main.py'],
@@ -65,6 +70,12 @@ a = Analysis(
         'PyQt6.QtOpenGLWidgets',
         'cv2',
         'numpy',
+        'numba',
+        'numba.core',
+        'numba.typed',
+        'numba.np.ufunc',
+        'llvmlite',
+        'llvmlite.binding',
         'PIL',
         'PIL.Image',
         'PIL.PngImagePlugin',
@@ -87,10 +98,12 @@ a = Analysis(
         'unittest', 'doctest',
         'pdb', 'profile', 'cProfile',
         'numba.cuda',
-        'numba.tests',
-        'numba.testing',
+        'numba.tests', 'numba.testing',
+        'numba.np.ufunc.parallel',
         'numba.pycc',
         'llvmlite.tests',
+        'llvmlite.binding.ffi',
+        'llvmlite.ir.values',
         'PyQt6.QtNetwork',
         'PyQt6.QtSvg',
         'PyQt6.QtPdf',
@@ -143,8 +156,6 @@ pyz = PYZ(a.pure)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
     name='SEAMS',
     debug=False,
@@ -156,7 +167,6 @@ exe = EXE(
         'ucrtbase.dll',
         'msvcp140.dll',
         'python3*.dll',
-        'seams_core.pyd',
     ],
     runtime_tmpdir=None,
     console=False,
@@ -167,4 +177,19 @@ exe = EXE(
     entitlements_file=None,
     icon='resources/icon.ico',
     version='version_info.txt',
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[
+        'vcruntime140.dll',
+        'ucrtbase.dll',
+        'msvcp140.dll',
+        'python3*.dll',
+    ],
+    name='SEAMS',
 )

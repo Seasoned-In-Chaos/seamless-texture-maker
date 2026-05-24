@@ -1,15 +1,44 @@
 """
 Ultra-premium cinematic loading screen for SEAMS.
+
+Spawns a background QThread that pre-compiles all Numba JIT functions
+so the first user action is stall-free.
 """
 import math
 import random
 import os
 from PyQt6.QtWidgets import QWidget, QApplication
-from PyQt6.QtCore import Qt, QTimer, QPointF, QRectF, pyqtSignal
+from PyQt6.QtCore import Qt, QTimer, QPointF, QRectF, pyqtSignal, QThread, QRect
 from PyQt6.QtGui import (
     QPainter, QColor, QPen, QBrush, QLinearGradient,
     QRadialGradient, QFont, QPainterPath, QPixmap, QRegion
 )
+
+
+class WarmupThread(QThread):
+    """Background thread that pre-compiles all Numba JIT functions.
+
+    Emits ``warmup_done(int)`` with the total elapsed milliseconds
+    when finished.  The splash screen does NOT wait for this thread
+    to close — compilation happens invisibly during the animation.
+    """
+
+    warmup_done = pyqtSignal(int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._total_ms: int = 0
+
+    def run(self) -> None:
+        try:
+            from ..core.warmup import warmup_all_jit_functions
+            timings = warmup_all_jit_functions()
+            self._total_ms = int(sum(timings.values()))
+        except Exception as exc:
+            import logging
+            logging.getLogger("seams.splash").warning("JIT warmup failed: %s", exc)
+            self._total_ms = -1
+        self.warmup_done.emit(self._total_ms)
 
 
 class Particle:
@@ -53,18 +82,23 @@ class SplashScreen(QWidget):
                          Qt.WindowType.WindowStaysOnTopHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
 
-        screen = QApplication.primaryScreen().availableGeometry()
-        target_w = min(1536, int(screen.width() * 0.94))
+        screen = QApplication.primaryScreen()
+        if screen:
+            avail = screen.availableGeometry()
+        else:
+            avail = QRect(0, 0, 1920, 1080)
+        target_w = min(1200, int(avail.width() * 0.75))
         target_h = int(target_w * 9 / 16)
-        if target_h > int(screen.height() * 0.92):
-            target_h = int(screen.height() * 0.92)
+        if target_h > int(avail.height() * 0.70):
+            target_h = int(avail.height() * 0.70)
             target_w = int(target_h * 16 / 9)
-        self.setFixedSize(max(1120, target_w), max(630, target_h))
+        target_w = min(target_w, avail.width() - 40)
+        target_h = min(target_h, avail.height() - 40)
+        self.setFixedSize(max(720, target_w), max(400, target_h))
 
-        # Center on screen
         self.move(
-            (screen.width() - self.width()) // 2,
-            (screen.height() - self.height()) // 2,
+            avail.x() + (avail.width() - self.width()) // 2,
+            avail.y() + (avail.height() - self.height()) // 2,
         )
 
         # Load real logo
@@ -94,6 +128,19 @@ class SplashScreen(QWidget):
         self._timer.setInterval(16)
         self._timer.timeout.connect(self._step)
         self._timer.start()
+
+        # JIT warmup thread — compiles Numba functions in background
+        self._warmup_thread = WarmupThread(self)
+        self._warmup_thread.warmup_done.connect(self._on_warmup_done)
+        self._warmup_thread.start()
+
+    def _on_warmup_done(self, ms: int) -> None:
+        import logging
+        logger = logging.getLogger("seams.splash")
+        if ms >= 0:
+            logger.info("JIT warmup completed in %d ms", ms)
+        else:
+            logger.warning("JIT warmup failed")
 
     def _step(self):
         dt = 0.016
@@ -377,10 +424,12 @@ class SplashScreen(QWidget):
         fv = QFont("Segoe UI", max(7, int(9 * s)))
         fv.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 0.5)
         p.setFont(fv)
+
         p.setPen(QColor(150, 148, 165, 210))
-        p.drawText(QPointF(46 * s, H - 76 * s), "v 2.0.0")
+        from ..utils.config import APP_VERSION
+        p.drawText(QPointF(46 * s, H - 76 * s), f"v {APP_VERSION}")
         p.setPen(QColor(120, 118, 135, 190))
-        p.drawText(QPointF(46 * s, H - 44 * s), "© 2024 SEAMS STUDIO")
+        p.drawText(QPointF(46 * s, H - 44 * s), "\u00a9 2024-2026 SEAMS STUDIO")
         p.drawText(QPointF(46 * s, H - 26 * s), "ALL RIGHTS RESERVED")
 
     # ─── RIGHT PANEL ──────────────────────────────────────────────────────────

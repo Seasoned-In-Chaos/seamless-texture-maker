@@ -1,12 +1,14 @@
 """Main window for SEAMS - Seamless Texture Studio."""
 import collections
 import os
+import sys
 import time
 
 import cv2
 import numpy as np
-from PyQt6.QtCore import QMutex, QRect, QThread, QTimer, Qt, pyqtSignal
+from PyQt6.QtCore import QMutex, QByteArray, QRect, QThread, QTimer, Qt, pyqtSignal
 from PyQt6.QtGui import QAction, QColor, QFont, QPainter, QPen, QPixmap, QShortcut, QKeySequence
+from PyQt6.QtWidgets import QApplication
 from PyQt6.QtWidgets import (
     QFileDialog,
     QFrame,
@@ -45,6 +47,12 @@ from ..utils.image_io import (
 
 
 logger = get_logger(__name__)
+
+
+def _current_exe_path() -> str:
+    if getattr(sys, "frozen", False):
+        return sys.executable
+    return ""
 
 
 class ProcessingThread(QThread):
@@ -934,7 +942,9 @@ class MainWindow(QMainWindow):
         self._connect_signals()
         self.control_panel.set_parameters(self.settings)
         self.setWindowTitle("SEAMS - Seamless Texture Studio")
-        self.resize(self.settings.get("window_width", 1500), self.settings.get("window_height", 920))
+        self._restore_window_geometry()
+        QApplication.instance().focusWindowChanged.connect(self._on_focus_window_changed)
+        self._start_update_check()
 
     def _setup_ui(self):
         self.setStyleSheet(get_dark_theme())
@@ -950,6 +960,9 @@ class MainWindow(QMainWindow):
         self.rail.navChanged.connect(self._on_nav_changed)
         self.rail.openClicked.connect(self._open_file)
         self.rail.exportClicked.connect(self._pbr_export_system)
+
+        self._update_banner = None
+
         root.addWidget(self.rail)
 
         center = QWidget()
@@ -1021,6 +1034,7 @@ class MainWindow(QMainWindow):
 
         help_menu = mb.addMenu("&Help")
         self._add_menu_action(help_menu, "&Keyboard Shortcuts", "F1", self._show_shortcuts)
+        self._add_menu_action(help_menu, "Check for &Updates", "", self._start_update_check)
 
         about_menu = mb.addMenu("&About")
         self._add_menu_action(about_menu, "About &SEAMS", "", self._show_about)
@@ -1362,9 +1376,30 @@ class MainWindow(QMainWindow):
         self.update_timer.setSingleShot(True)
         self.update_timer.setInterval(24)
         self.update_timer.timeout.connect(self._request_live_preview)
+
+        # ── 3-Stage Progressive Preview Timers ─────────────────────────
+        # Stage 1: immediate (0ms, scale=0.125) → rough instant preview
+        # Stage 2: 80ms debounce (scale=0.5) → medium quality
+        # Stage 3: 400ms debounce (scale=1.0) → full resolution
+        self._preview_stage1_timer = QTimer()
+        self._preview_stage1_timer.setSingleShot(True)
+        self._preview_stage1_timer.setInterval(0)
+        self._preview_stage1_timer.timeout.connect(self._request_preview_stage1)
+
+        self._preview_stage2_timer = QTimer()
+        self._preview_stage2_timer.setSingleShot(True)
+        self._preview_stage2_timer.setInterval(80)
+        self._preview_stage2_timer.timeout.connect(self._request_preview_stage2)
+
+        self._preview_stage_timers = [
+            self._preview_stage1_timer,
+            self._preview_stage2_timer,
+        ]
+        self._current_preview_scale: float = 1.0
+
         self.fullres_timer = QTimer()
         self.fullres_timer.setSingleShot(True)
-        self.fullres_timer.setInterval(320)
+        self.fullres_timer.setInterval(400)
         self.fullres_timer.timeout.connect(self._process_texture)
 
     def statusBar(self):
@@ -1521,8 +1556,43 @@ class MainWindow(QMainWindow):
             return
         if self.processor.original_image is not None:
             self.fullres_timer.stop()
-            if not self.update_timer.isActive():
-                self.update_timer.start()
+            # Cancel higher stages and restart from stage 1
+            self._preview_stage2_timer.stop()
+            self._preview_stage1_timer.start()
+
+    def _request_preview_stage1(self):
+        """Stage 1: immediate, scale=0.125 for rough instant preview."""
+        self._process_at_scale(0.125)
+        self._preview_stage2_timer.start()
+
+    def _request_preview_stage2(self):
+        """Stage 2: 80ms debounce, scale=0.5 for medium quality."""
+        self._process_at_scale(0.5)
+
+    def _process_at_scale(self, scale: float):
+        """Process the texture at a reduced scale and display the result."""
+        if self.image_np is None:
+            return
+        import cv2
+        h, w = self.image_np.shape[:2]
+        small_w = max(1, int(w * scale))
+        small_h = max(1, int(h * scale))
+        small = cv2.resize(self.image_np, (small_w, small_h), interpolation=cv2.INTER_AREA)
+        params = self.control_panel.get_parameters()
+        params["preprocessing"] = self.pre_panel.get_parameters()
+        try:
+            processor = self.processor
+            processor.load_image(small)
+            result = processor.process(preview=True, params=params)
+            if result is not None:
+                if result.shape[0] != h or result.shape[1] != w:
+                    result = cv2.resize(result, (w, h), interpolation=cv2.INTER_LINEAR)
+                self.image_viewer.set_after_image(result)
+        except Exception as exc:
+            import logging
+            logging.getLogger("seams.preview").debug("stage preview failed at scale %.3f: %s", scale, exc)
+        # Reload original-resolution image for subsequent full-res processing
+        self.processor.load_image(self.image_np)
 
     def _request_live_preview(self):
         params = self.control_panel.get_parameters()
@@ -1833,8 +1903,7 @@ class MainWindow(QMainWindow):
             event.ignore()
             return
 
-        self.settings["window_width"] = self.width()
-        self.settings["window_height"] = self.height()
+        self._save_window_geometry()
         self.settings["active_tool"] = self._active_mode
         self.settings.update(self.control_panel.get_parameters())
         save_settings(self.settings)
@@ -1912,3 +1981,131 @@ class MainWindow(QMainWindow):
     def _on_classic_mode_requested(self):
         self.image_viewer.set_workspace(0)
         self._on_nav_changed("seamless")
+
+    def _restore_window_geometry(self):
+        geom_ba = self.settings.get("window_geometry")
+        if geom_ba:
+            try:
+                ba = QByteArray(bytes.fromhex(geom_ba))
+                self.restoreGeometry(ba)
+            except Exception:
+                pass
+        # Always clamp to current screen — restored geometry from a
+        # different display / DPI can overflow the available area.
+        screen = self.screen() or QApplication.primaryScreen()
+        if screen:
+            avail = screen.availableGeometry()
+            geo = self.geometry()
+            if geo.width() > avail.width() or geo.height() > avail.height():
+                nw = min(geo.width(), avail.width() - 40)
+                nh = min(geo.height(), avail.height() - 60)
+                nx = max(avail.x(), min(geo.x(), avail.x() + avail.width() - nw))
+                ny = max(avail.y(), min(geo.y(), avail.y() + avail.height() - nh))
+                self.setGeometry(nx, ny, nw, nh)
+            elif not geom_ba:
+                w = max(960, min(int(avail.width() * 0.82), avail.width() - 40))
+                h = max(640, min(int(avail.height() * 0.82), avail.height() - 60))
+                x = avail.x() + (avail.width() - w) // 2
+                y = avail.y() + (avail.height() - h) // 2
+                self.setGeometry(x, y, w, h)
+
+    def _save_window_geometry(self):
+        ba = self.saveGeometry()
+        self.settings["window_geometry"] = bytes(ba).hex()
+        self.settings["window_width"] = self.width()
+        self.settings["window_height"] = self.height()
+
+    def _on_focus_window_changed(self, window):
+        if window is self.windowHandle():
+            screen = self.screen()
+            if screen:
+                avail = screen.availableGeometry()
+                geo = self.geometry()
+                if geo.width() > avail.width() or geo.height() > avail.height():
+                    nw = min(geo.width(), avail.width() - 40)
+                    nh = min(geo.height(), avail.height() - 60)
+                    nx = avail.x() + (avail.width() - nw) // 2
+                    ny = avail.y() + (avail.height() - nh) // 2
+                    self.setGeometry(nx, ny, nw, nh)
+
+    def moveEvent(self, event):
+        super().moveEvent(event)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        screen = self.screen()
+        if screen:
+            avail = screen.availableGeometry()
+            geo = self.geometry()
+            if geo.width() > avail.width() or geo.height() > avail.height():
+                nw = min(geo.width(), avail.width() - 40)
+                nh = min(geo.height(), avail.height() - 60)
+                nx = max(avail.x(), min(geo.x(), avail.x() + avail.width() - nw))
+                ny = max(avail.y(), min(geo.y(), avail.y() + avail.height() - nh))
+                self.setGeometry(nx, ny, nw, nh)
+
+    def _start_update_check(self):
+        from ..utils.updater import UpdateChecker, cleanup_stale_update
+        cleanup_stale_update()
+        self._update_checker = UpdateChecker(self)
+        self._update_checker.update_found.connect(self._on_update_found)
+        self._update_checker.start()
+
+    def _on_update_found(self, version: str, download_url: str, release_notes: str):
+        from ..utils.updater import UpdateBanner
+        if not download_url:
+            return
+        self._update_banner = UpdateBanner(version, self)
+        self._update_banner.set_info(download_url, release_notes)
+        self._update_banner.download_requested.connect(self._on_update_download)
+        self._update_banner.dismiss_requested.connect(self._on_update_dismiss)
+        central = self.centralWidget()
+        if central and central.layout():
+            central.layout().insertWidget(0, self._update_banner)
+        self._update_banner.show()
+
+    def _on_update_dismiss(self):
+        if self._update_banner:
+            self._update_banner.setParent(None)
+            self._update_banner.deleteLater()
+            self._update_banner = None
+
+    def _on_update_download(self):
+        from ..utils.updater import UpdateBanner
+        if not self._update_banner:
+            return
+        url = self._update_banner._download_url
+        if not url:
+            return
+        self._update_banner.show_progress()
+        from ..utils.updater import UpdateDownloader
+        self._update_downloader = UpdateDownloader(url, self)
+        self._update_downloader.progress.connect(self._on_update_progress)
+        self._update_downloader.finished_ok.connect(self._on_update_downloaded)
+        self._update_downloader.error.connect(self._on_update_error)
+        self._update_downloader.start()
+
+    def _on_update_progress(self, pct: int):
+        if self._update_banner:
+            self._update_banner.set_progress(pct)
+
+    def _on_update_downloaded(self, new_exe: str):
+        from ..utils.updater import UpdateBanner
+        current = _current_exe_path()
+        if not current:
+            if self._update_banner:
+                self._update_banner.show_error("Cannot determine app path")
+            return
+        if self._update_banner:
+            self._update_banner.show_complete()
+        from ..utils.updater import apply_update_and_restart
+        download_url = self._update_banner._download_url if self._update_banner else ""
+        apply_update_and_restart(new_exe, current, download_url=download_url)
+        QTimer.singleShot(500, QApplication.quit)
+
+    def _on_update_error(self, msg: str):
+        if self._update_banner:
+            self._update_banner.show_error(msg)

@@ -1,10 +1,20 @@
 """
 JIT-compiled Materialize-inspired synthesis methods (Splat, Overlap).
 Optimized for real-time performance with proper wrapping support.
+
+If the Rust extension (seams_core) is available, it is used automatically.
 """
+from __future__ import annotations
+
 import numpy as np
 from numba import jit, prange
 import math
+
+try:
+    from seams_core import splat_synthesize as _rs_splat
+    HAS_RUST_SPLAT = True
+except ImportError:
+    HAS_RUST_SPLAT = False
 
 
 @jit(nopython=True, fastmath=True, cache=True)
