@@ -208,6 +208,11 @@ class ImageLoadThread(QThread):
     def run(self):
         try:
             image, metadata = load_image(self.path)
+            # The processing pipeline operates entirely in float32 [0, 255].
+            # load_image returns the raw OpenCV array (uint8 for most formats),
+            # so convert here at the boundary.
+            if image.dtype != np.float32:
+                image = image.astype(np.float32)
             info = get_file_info(self.path)
             self.loaded.emit(self.path, image, metadata, info, self.generation)
         except Exception as exc:
@@ -938,7 +943,6 @@ class MainWindow(QMainWindow):
         self._setup_ui()
         self._setup_menu()
         self._setup_status_bar()
-        self._setup_shortcuts()
         self._connect_signals()
         self.control_panel.set_parameters(self.settings)
         self.setWindowTitle("SEAMS - Seamless Texture Studio")
@@ -1313,22 +1317,7 @@ class MainWindow(QMainWindow):
         # Kick off a full-res re-process in the background
         QTimer.singleShot(80, self._process_texture)
 
-    def _setup_shortcuts(self):
-        QShortcut(QKeySequence("Ctrl+O"), self).activated.connect(self._open_file)
-        QShortcut(QKeySequence("Ctrl+S"), self).activated.connect(self._save_file)
-        QShortcut(QKeySequence("Ctrl+Shift+S"), self).activated.connect(self._save_file_as)
-        QShortcut(QKeySequence("Ctrl+E"), self).activated.connect(self._export_normal_map)
-        QShortcut(QKeySequence("Ctrl+Shift+E"), self).activated.connect(self._pbr_export_system)
-        QShortcut(QKeySequence("Alt+F4"), self).activated.connect(self.close)
-        
-        QShortcut(QKeySequence("1"), self).activated.connect(lambda: self._on_nav_changed("delight"))
-        QShortcut(QKeySequence("2"), self).activated.connect(lambda: self._on_nav_changed("seamless"))
-        QShortcut(QKeySequence("3"), self).activated.connect(lambda: self._on_nav_changed("material"))
-        QShortcut(QKeySequence("Ctrl+0"), self).activated.connect(self.image_viewer.fit_to_view)
-        
-        QShortcut(QKeySequence("Ctrl+Z"), self).activated.connect(self._undo)
-        QShortcut(QKeySequence("Ctrl+Y"), self).activated.connect(self._redo)
-        QShortcut(QKeySequence("F1"), self).activated.connect(self._show_shortcuts)
+
 
 
     def _setup_status_bar(self):
@@ -1611,11 +1600,11 @@ class MainWindow(QMainWindow):
             self._pending_reprocess = False
             self._processing_generation += 1
         params = self.pre_panel.get_parameters()
-        strength = float(params.get("delight", 0.0))
-        flatness = float(params.get("flatness", 0.0))
-        if strength > 0 or flatness > 0:
+        if any(v > 0 for v in params.values()):
             from app.core.delighting import delight_image
-            base_color = delight_image(self.image_np, strength=strength, flatness=flatness)
+            delight_kwargs = params.copy()
+            delight_kwargs["strength"] = delight_kwargs.pop("delight", 0.0)
+            base_color = delight_image(self.image_np, **delight_kwargs)
         elif self.processor.delighted_image is not None and self.processor.delighted_image.shape == self.image_np.shape:
             base_color = self.processor.delighted_image.copy()
         else:

@@ -5,6 +5,7 @@ from PyQt6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
     QComboBox,
+    QDoubleSpinBox,
     QFrame,
     QGridLayout,
     QHBoxLayout,
@@ -106,20 +107,30 @@ class LabeledSlider(QWidget):
         top = QHBoxLayout()
         self.label = QLabel(label.upper())
         self.label.setObjectName("ParamLabel")
-        self.value_label = QLabel(self._format(default))
-        self.value_label.setObjectName("ValueChip")
-        self.value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.value_label.setFixedWidth(42)
+        
+        self.spin = QDoubleSpinBox()
+        self.spin.setObjectName("ValueChip")
+        self.spin.setMinimum(self.min_val)
+        self.spin.setMaximum(self.max_val)
+        if self.suffix:
+            self.spin.setSuffix(self.suffix)
+        self.spin.setDecimals(0 if isinstance(self.min_val, int) and isinstance(self.max_val, int) else 1)
+        self.spin.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
+        self.spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.spin.setFixedWidth(50)
+        self.spin.setValue(default)
+        self.spin.valueChanged.connect(self._on_spin_changed)
+
         top.addWidget(self.label)
         top.addStretch()
-        top.addWidget(self.value_label)
+        top.addWidget(self.spin)
         layout.addLayout(top)
 
         self.slider = QSlider(Qt.Orientation.Horizontal)
         self.slider.setMinimum(0)
         self.slider.setMaximum(100)
         self.slider.setValue(self._to_raw(default))
-        self.slider.valueChanged.connect(self._on_value_changed)
+        self.slider.valueChanged.connect(self._on_slider_changed)
         self.slider.sliderPressed.connect(self.sliderPressed.emit)
         self.slider.sliderReleased.connect(self.sliderReleased.emit)
         self.slider.sliderMoved.connect(self._on_slider_moved)
@@ -133,21 +144,25 @@ class LabeledSlider(QWidget):
     def _from_raw(self, value):
         return self.min_val + (value / 100.0) * (self.max_val - self.min_val)
 
-    def _format(self, val):
-        if isinstance(self.min_val, int) and isinstance(self.max_val, int):
-            return f"{int(round(val))}{self.suffix}"
-        return f"{val:.1f}{self.suffix}"
-
-    def _on_value_changed(self, value):
+    def _on_slider_changed(self, value):
         mapped = self._from_raw(value)
-        self.value_label.setText(self._format(mapped))
+        self.spin.blockSignals(True)
+        self.spin.setValue(mapped)
+        self.spin.blockSignals(False)
         self.valueChanged.emit(mapped)
+        
+    def _on_spin_changed(self, value):
+        raw = self._to_raw(value)
+        self.slider.blockSignals(True)
+        self.slider.setValue(raw)
+        self.slider.blockSignals(False)
+        self.valueChanged.emit(value)
 
     def _on_slider_moved(self, value):
         self.sliderMoved.emit(self._from_raw(value))
 
     def value(self):
-        return self._from_raw(self.slider.value())
+        return self.spin.value()
 
     def setValue(self, val):
         self.slider.setValue(self._to_raw(val))

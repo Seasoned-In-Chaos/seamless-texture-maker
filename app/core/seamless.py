@@ -54,8 +54,7 @@ class SeamlessProcessor:
         self.splat_randomize = 0
 
         # Delighting/Flattening params
-        self.delight_strength = 0.0
-        self.flatness = 0.0
+        self.preprocessing_params = {}
     
     def set_parameters(self, **kwargs):
         """Update processing parameters."""
@@ -86,9 +85,7 @@ class SeamlessProcessor:
             if 'falloff' in sp: self.edge_falloff = sp['falloff']
 
         if 'preprocessing' in kwargs:
-            pre = kwargs['preprocessing']
-            if 'delight' in pre: self.delight_strength = pre['delight']
-            if 'flatness' in pre: self.flatness = pre['flatness']
+            self.preprocessing_params = kwargs['preprocessing']
 
         # Handle old saved 'standard' method: fall back to 'overlap'
         if self.method == 'standard':
@@ -195,8 +192,10 @@ class SeamlessProcessor:
             img = self._original_image.copy()
         
         # Apply delighting/flattening
-        if self.delight_strength > 0 or self.flatness > 0:
-            img = delight_image(img, strength=self.delight_strength, flatness=self.flatness)
+        if self.preprocessing_params and any(v > 0 for v in self.preprocessing_params.values()):
+            delight_kwargs = self.preprocessing_params.copy()
+            delight_kwargs["strength"] = delight_kwargs.pop("delight", 0.0)
+            img = delight_image(img, **delight_kwargs)
         
         # Store for UI display
         self._delighted_image = img.copy()
@@ -219,7 +218,7 @@ class SeamlessProcessor:
     
     def _get_cache_params(self):
         """Get current parameters for cache key."""
-        return {
+        params = {
             'method': self.method,
             'overlap_x': round(self.overlap_x, 3),
             'overlap_y': round(self.overlap_y, 3),
@@ -229,9 +228,11 @@ class SeamlessProcessor:
             'splat_random_rotation': round(self.splat_random_rotation, 3),
             'splat_wobble': round(self.splat_wobble, 3),
             'splat_randomize': int(self.splat_randomize),
-            'delight_strength': round(self.delight_strength, 3),
-            'flatness': round(self.flatness, 3)
         }
+        if self.preprocessing_params:
+            for k, v in self.preprocessing_params.items():
+                params[f'pre_{k}'] = round(float(v), 3) if isinstance(v, (int, float)) else v
+        return params
             
     def _process_overlap(self, img):
         """Process using Overlap method."""
@@ -579,56 +580,17 @@ class SeamlessProcessor:
                 fade_y = np.linspace(0, 1, min(overlap, th)).astype(np.float32)
                 fade_x = np.linspace(0, 1, min(overlap, tw)).astype(np.float32)
 
-                if y_start > 0 and x_start > 0:
-                    # 2D corner: multiply y and x fades for proper blending
-                    fy2 = fade_y[:, np.newaxis, np.newaxis] if img.ndim == 3 else fade_y[:, np.newaxis]
-                    fx2 = fade_x[np.newaxis, :, np.newaxis] if img.ndim == 3 else fade_x[np.newaxis, :]
-                    corner_h = min(len(fade_y), th)
-                    corner_w = min(len(fade_x), tw)
-                    w2d = fy2[:corner_h] * fx2[:corner_w]
-                    orig_corner = result[y_start:y_start + corner_h, x_start:x_start + corner_w]
-                    processed[:corner_h, :corner_w] = (processed[:corner_h, :corner_w] * w2d +
-                                                        orig_corner * (1 - w2d))
-                    # Remaining y-edge (past x overlap)
-                    if corner_w < len(fade_y):
-                        y_remain = fade_y[corner_w:]
-                        if img.ndim == 3:
-                            yr = y_remain[:, np.newaxis, np.newaxis]
-                        else:
-                            yr = y_remain[:, np.newaxis]
-                        r_end = min(y_start + len(y_remain), y_start + th)
-                        p_end = min(len(y_remain), th)
-                        processed[:p_end, corner_w:] = (
-                            processed[:p_end, corner_w:] * yr[:p_end] +
-                            result[y_start:y_start + p_end, x_start + corner_w:x1] * (1 - yr[:p_end])
-                        )
-                    # Remaining x-edge (past y overlap)
-                    if corner_h < len(fade_x):
-                        x_remain = fade_x[corner_h:]
-                        if img.ndim == 3:
-                            xr = x_remain[np.newaxis, :, np.newaxis]
-                        else:
-                            xr = x_remain[np.newaxis, :]
-                        p_end = min(len(x_remain), tw)
-                        processed[corner_h:, :p_end] = (
-                            processed[corner_h:, :p_end] * xr[:p_end] +
-                            result[y_start + corner_h:y1, x_start:x_start + p_end] * (1 - xr[:p_end])
-                        )
-                elif y_start > 0:
-                    if img.ndim == 3:
-                        fade = fade_y[:, np.newaxis, np.newaxis]
-                    else:
-                        fade = fade_y[:, np.newaxis]
-                    processed[:len(fade)] = (processed[:len(fade)] * fade +
-                                              result[y_start:y_start + len(fade), x_start:x1] * (1 - fade))
+                if y_start > 0:
+                    fade = fade_y[:, np.newaxis, np.newaxis] if img.ndim == 3 else fade_y[:, np.newaxis]
+                    fh = len(fade_y)
+                    processed[:fh] = (processed[:fh] * fade +
+                                      result[y_start:y_start+fh, x_start:x1] * (1 - fade))
 
-                elif x_start > 0:
-                    if img.ndim == 3:
-                        fade = fade_x[np.newaxis, :, np.newaxis]
-                    else:
-                        fade = fade_x[np.newaxis, :]
-                    processed[:, :len(fade)] = (processed[:, :len(fade)] * fade +
-                                                 result[y_start:y1, x_start:x_start + len(fade)] * (1 - fade))
+                if x_start > 0:
+                    fade = fade_x[np.newaxis, :, np.newaxis] if img.ndim == 3 else fade_x[np.newaxis, :]
+                    fw = len(fade_x)
+                    processed[:, :fw] = (processed[:, :fw] * fade +
+                                         result[y_start:y1, x_start:x_start+fw] * (1 - fade))
 
                 # Write tile into result
                 result[y_start:y1, x_start:x1] = processed

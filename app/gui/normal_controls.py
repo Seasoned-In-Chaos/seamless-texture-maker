@@ -21,31 +21,76 @@ class MaterialControlPanel(PanelShell):
             parent,
         )
 
-        # 1. NORMAL / BUMP
-        self.normal_card = PluginCard("Normal & Bump", "Surface direction and detail intensity.")
-        self.normal_intensity = LabeledSlider("Intensity", 0, 100, 50, "%")
-        self.normal_detail = LabeledSlider("Detail Scale", 0, 100, 50, "%")
-        self.normal_smooth = LabeledSlider("Smoothness", 0, 100, 0, "%")
+        # 1. NORMAL
+        self.normal_card = PluginCard("Normal Map Settings", "Advanced normal generation matching NVTT.")
+        
+        self.height_source = QComboBox()
+        self.height_source.addItems(["Average RGB", "Luminance", "Max RGB", "Red", "Green", "Blue", "Alpha Channel"])
+        self.height_source.currentTextChanged.connect(self._on_live_update)
+        
+        self.filter_scale = QComboBox()
+        self.filter_scale.addItems(["Multi-scale (Recommended)", "4 Sample", "3x3", "5x5", "7x7", "9x9", "dUdV"])
+        self.filter_scale.currentTextChanged.connect(self._on_live_update)
+        
+        self.normal_filter = QComboBox()
+        self.normal_filter.addItems(["Scharr", "Sobel", "Prewitt", "Central Difference", "Forward Difference", "Backward Difference"])
+        self.normal_filter.currentTextChanged.connect(self._on_live_update)
+
+        self.normal_wrap = QCheckBox("Wrap")
+        self.normal_wrap.setChecked(True)
+        self.normal_wrap.toggled.connect(self._on_live_update)
+
+        self.normal_invert_x = QCheckBox("Invert X")
+        self.normal_invert_x.toggled.connect(self._on_live_update)
+
+        self.normal_invert_y = QCheckBox("Invert Y")
+        self.normal_invert_y.toggled.connect(self._on_live_update)
+
         self.normal_invert_height = QCheckBox("Invert Height")
-        self.normal_invert = QCheckBox("Invert Y (DirectX)")
-        self.normal_map_type = QComboBox()
-        self.normal_map_type.addItems(["Normal Map (RGB)", "Bump Map (Grayscale)"])
-        self.normal_contrast = QComboBox()
-        self.normal_contrast.addItems(["Balanced", "Auto", "Soft", "Sharp"])
-        for w in [self.normal_intensity, self.normal_smooth, self.normal_detail]:
-            w.valueChanged.connect(self._on_live_update)
-            self.normal_card.body.addWidget(w)
         self.normal_invert_height.toggled.connect(self._on_live_update)
-        self.normal_invert.toggled.connect(self._on_live_update)
+
+        self.normal_map_type = QComboBox()
+        self.normal_map_type.addItems(["Normal", "Bump"])
         self.normal_map_type.currentTextChanged.connect(self._on_live_update)
-        self.normal_contrast.currentTextChanged.connect(self._on_live_update)
-        self.normal_card.body.addWidget(self.normal_invert_height)
+
+        self.normal_format = QComboBox()
+        self.normal_format.addItems(["OpenGL", "DirectX"])
+        self.normal_format.currentTextChanged.connect(self._on_live_update)
+        
+        self.normal_normalize = QCheckBox("Normalize")
+        self.normal_normalize.setChecked(True)
+        self.normal_normalize.toggled.connect(self._on_live_update)
+
+        self.normal_min_z = LabeledSlider("Min Z", 0, 100, 0, "%")
+        self.normal_min_z.valueChanged.connect(self._on_live_update)
+
+        self.normal_scale = LabeledSlider("Scale", 1, 200, 64, "")
+        self.normal_scale.valueChanged.connect(self._on_live_update)
+
+        self.normal_card.body.addWidget(QLabel("Height Source"))
+        self.normal_card.body.addWidget(self.height_source)
+        
+        self.normal_card.body.addWidget(QLabel("Filter Type"))
+        self.normal_card.body.addWidget(self.normal_filter)
+        self.normal_card.body.addWidget(self.filter_scale)
+
+        flags_layout = QHBoxLayout()
+        flags_layout.addWidget(self.normal_wrap)
+        flags_layout.addWidget(self.normal_invert_x)
+        flags_layout.addWidget(self.normal_invert_y)
+        flags_layout.addWidget(self.normal_invert_height)
+        self.normal_card.body.addLayout(flags_layout)
+
         self.normal_card.body.addWidget(QLabel("Map Type"))
         self.normal_card.body.addWidget(self.normal_map_type)
+        
         self.normal_card.body.addWidget(QLabel("Format"))
-        self.normal_card.body.addWidget(self.normal_invert)
-        self.normal_card.body.addWidget(QLabel("Contrast Handling"))
-        self.normal_card.body.addWidget(self.normal_contrast)
+        self.normal_card.body.addWidget(self.normal_format)
+
+        self.normal_card.body.addWidget(self.normal_min_z)
+        self.normal_card.body.addWidget(self.normal_scale)
+        self.normal_card.body.addWidget(self.normal_normalize)
+        
         self.layout.addWidget(self.normal_card)
 
         # 2. ROUGHNESS
@@ -73,9 +118,12 @@ class MaterialControlPanel(PanelShell):
         self.ao_card = PluginCard("Ambient Occlusion", "Micro-shadow depth and spread.")
         self.ao_intensity = LabeledSlider("Depth", 0, 100, 50, "%")
         self.ao_spread = LabeledSlider("Spread", 0, 100, 30, "%")
+        self.ao_invert = QCheckBox("Invert AO")
         for w in [self.ao_intensity, self.ao_spread]:
             w.valueChanged.connect(self._on_live_update)
             self.ao_card.body.addWidget(w)
+        self.ao_invert.toggled.connect(self._on_live_update)
+        self.ao_card.body.addWidget(self.ao_invert)
         self.layout.addWidget(self.ao_card)
 
         # 5. HEIGHT / DISPLACEMENT
@@ -166,13 +214,19 @@ class MaterialControlPanel(PanelShell):
 
     def get_parameters(self):
         return {
-            "normal_intensity": self.normal_intensity.value() / 100.0,
-            "normal_smooth": self.normal_smooth.value() / 100.0,
-            "normal_detail": self.normal_detail.value() / 100.0,
+            "height_source": self.height_source.currentText().lower().replace(" ", "_"),
+            "filter_scale": self.filter_scale.currentText().lower(),
+            "normal_filter": self.normal_filter.currentText().lower(),
+            "normal_wrap": self.normal_wrap.isChecked(),
+            "normal_invert_x": self.normal_invert_x.isChecked(),
+            "normal_invert_y": self.normal_invert_y.isChecked(),
+            "normal_normalize": self.normal_normalize.isChecked(),
+            "normal_map_type": self.normal_map_type.currentText().lower(),
+            "normal_format": self.normal_format.currentText().lower(),
             "normal_invert_height": self.normal_invert_height.isChecked(),
-            "normal_map_type": "bump" if "Bump" in self.normal_map_type.currentText() else "normal",
-            "normal_format": "directx" if self.normal_invert.isChecked() else "opengl",
-            "normal_contrast": self.normal_contrast.currentText().lower(),
+            "normal_min_z": self.normal_min_z.value() / 100.0,
+            "normal_scale": self.normal_scale.value() / 100.0,
+            
             "rough_intensity": self.rough_intensity.value() / 100.0,
             "rough_contrast": self.rough_contrast.value() / 100.0,
             "rough_invert": self.rough_invert.isChecked(),
@@ -180,6 +234,7 @@ class MaterialControlPanel(PanelShell):
             "metal_edge": self.metal_edge.value() / 100.0,
             "ao_intensity": self.ao_intensity.value() / 100.0,
             "ao_spread": self.ao_spread.value() / 100.0,
+            "ao_invert": self.ao_invert.isChecked(),
             "height_depth": self.height_depth.value() / 100.0,
             "height_smooth": self.height_smooth.value() / 100.0,
             "height_invert": self.height_invert.isChecked(),

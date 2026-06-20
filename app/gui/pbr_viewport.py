@@ -130,19 +130,40 @@ def numpy_to_qimage(image: np.ndarray | None) -> QImage:
     """Create an owned RGB/RGBA QImage from an OpenCV/numpy image."""
     if image is None:
         return QImage()
-    if len(image.shape) == 2:
-        rgb = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
-    elif image.shape[2] == 4:
-        rgb = cv2.cvtColor(image, cv2.COLOR_BGRA2RGBA)
+        
+    is_16bit = (image.dtype == np.uint16)
+        
+    if image.dtype != np.uint8 and not is_16bit:
+        if image.dtype == np.float32 or image.dtype == np.float64:
+            image = np.clip(image, 0, 255).astype(np.uint8)
+        else:
+            image = image.astype(np.uint8)
+            
+    if is_16bit:
+        # Qt 16-bit formats require 64bpp (4 channels)
+        if len(image.shape) == 2:
+            rgb = cv2.cvtColor(image, cv2.COLOR_GRAY2RGBA)
+        elif image.shape[2] == 3:
+            rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGBA)
+        else:
+            rgb = cv2.cvtColor(image, cv2.COLOR_BGRA2RGBA)
+        fmt = QImage.Format.Format_RGBA64
     else:
-        rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        if len(image.shape) == 2:
+            rgb = cv2.cvtColor(image, cv2.COLOR_GRAY2RGB)
+        elif image.shape[2] == 4:
+            rgb = cv2.cvtColor(image, cv2.COLOR_BGRA2RGBA)
+        else:
+            rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            
+        if rgb.shape[2] == 4:
+            fmt = QImage.Format.Format_RGBA8888
+        else:
+            fmt = QImage.Format.Format_RGB888
 
-    if rgb.shape[2] == 4:
-        fmt = QImage.Format.Format_RGBA8888
-    else:
-        fmt = QImage.Format.Format_RGB888
     h, w, c = rgb.shape
-    qimg = QImage(rgb.data, w, h, w * c, fmt)
+    bpl = w * c * (2 if is_16bit else 1)
+    qimg = QImage(rgb.data, w, h, bpl, fmt)
     return qimg.copy()
 
 
@@ -190,7 +211,8 @@ def _build_plane(size=3.0, segments=96, orientation="xz") -> MeshData:
                 else:
                     pts.append(QVector3D(px, 0.0, py))
                     normal = QVector3D(0, 1, 0)
-            for i in (0, 1, 2, 0, 2, 3):
+            indices = (0, 1, 2, 0, 2, 3) if orientation == "xy" else (0, 2, 1, 0, 3, 2)
+            for i in indices:
                 u, v = coords[i]
                 _append_vertex(out, pts[i], normal, u, v)
     data = np.asarray(out, dtype=np.float32)
@@ -336,6 +358,7 @@ uniform vec3 u_envColor;
 uniform float u_envIntensity;
 uniform float u_exposure;
 uniform float u_time;
+uniform vec2 u_tiling;
 
 varying vec3 v_worldPos;
 varying vec3 v_normal;
@@ -354,13 +377,9 @@ vec3 linearToSrgb(vec3 c) {
     return pow(max(c, vec3(0.0)), vec3(1.0 / 2.2));
 }
 
-vec3 acesTonemap(vec3 x) {
-    const float a = 2.51;
-    const float b = 0.03;
-    const float c = 2.43;
-    const float d = 0.59;
-    const float e = 0.14;
-    return saturate((x * (a * x + b)) / (x * (c * x + d) + e));
+vec3 neutralTonemap(vec3 x) {
+    // Simple Reinhard-like curve that preserves color ratios better than ACES
+    return x / (x + 0.155) * 1.019;
 }
 
 float dGgx(float nDotH, float roughness) {
@@ -391,9 +410,9 @@ vec3 checker(vec2 uv) {
 vec3 triplanarBase(vec3 n) {
     vec3 blend = pow(abs(n), vec3(4.0));
     blend /= max(blend.x + blend.y + blend.z, 0.0001);
-    vec3 x = srgbToLinear(texture2D(u_baseMap, v_worldPos.yz).rgb);
-    vec3 y = srgbToLinear(texture2D(u_baseMap, v_worldPos.xz).rgb);
-    vec3 z = srgbToLinear(texture2D(u_baseMap, v_worldPos.xy).rgb);
+    vec3 x = srgbToLinear(texture2D(u_baseMap, v_worldPos.yz * u_tiling).rgb);
+    vec3 y = srgbToLinear(texture2D(u_baseMap, v_worldPos.xz * u_tiling).rgb);
+    vec3 z = srgbToLinear(texture2D(u_baseMap, v_worldPos.xy * u_tiling).rgb);
     return x * blend.x + y * blend.y + z * blend.z;
 }
 
@@ -460,7 +479,7 @@ void main() {
     vec3 env = base * u_envColor * u_envIntensity * (0.22 + 0.34 * ao);
     vec3 rim = fresnelSchlick(nDotV, f0) * u_envColor * u_envIntensity * horizon * (1.0 - roughness * 0.65);
     vec3 color = (direct + env + rim) * ao + emissive;
-    color = acesTonemap(color * u_exposure);
+    color = neutralTonemap(color * u_exposure);
     gl_FragColor = vec4(linearToSrgb(color), alpha);
 }
 """
@@ -831,10 +850,10 @@ class PBRViewport(QOpenGLWidget):
 
     def _lighting(self):
         presets = {
-            "Studio": ((-0.45, -0.72, -0.54), (5.0, 4.75, 4.35), (0.92, 0.96, 1.0)),
-            "Outdoor": ((-0.30, -0.88, -0.35), (5.9, 5.65, 5.2), (0.78, 0.88, 1.0)),
-            "Archviz": ((-0.72, -0.50, -0.48), (4.6, 4.35, 3.9), (1.0, 0.92, 0.82)),
-            "Neutral Gray": ((-0.40, -0.68, -0.62), (4.3, 4.3, 4.3), (0.86, 0.86, 0.86)),
+            "Studio": ((-0.45, -0.72, -0.54), (1.5, 1.5, 1.5), (0.7, 0.7, 0.75)),
+            "Outdoor": ((-0.30, -0.88, -0.35), (1.8, 1.7, 1.6), (0.6, 0.7, 0.8)),
+            "Archviz": ((-0.72, -0.50, -0.48), (1.4, 1.35, 1.2), (0.8, 0.75, 0.65)),
+            "Neutral Gray": ((-0.40, -0.68, -0.62), (1.2, 1.2, 1.2), (0.65, 0.65, 0.65)),
         }
         direction, light, env = presets.get(self._hdri, presets["Studio"])
         x, y, z = direction

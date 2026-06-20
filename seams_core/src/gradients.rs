@@ -6,6 +6,7 @@ use rayon::prelude::*;
 pub fn compute_gradients(
     py: Python,
     height_map: PyReadonlyArray2<f32>,
+    weights: [f32; 4],
     strength: f32,
 ) -> PyResult<(Py<PyArray3<f32>>, Py<PyArray2<f32>>)> {
     let h_map = height_map.as_array();
@@ -14,9 +15,26 @@ pub fn compute_gradients(
     let mut normal = ndarray::Array3::<f32>::zeros((h, w, 3));
     let mut magnitude = ndarray::Array2::<f32>::zeros((h, w));
 
-    // Sobel kernels:
-    // Kx = [[-1,0,1],[-2,0,2],[-1,0,1]]
-    // Ky = [[-1,-2,-1],[0,0,0],[1,2,1]]
+    // Compute the 9x9 kernels for X and Y
+    let mut wx = [[0.0f32; 9]; 9];
+    let mut wy = [[0.0f32; 9]; 9];
+    let radii = [1, 2, 3, 4];
+    for (i, &w_scale) in weights.iter().enumerate() {
+        if w_scale == 0.0 { continue; }
+        let r = radii[i];
+        for dy in -r..=r {
+            for dx in -r..=r {
+                if dx != 0 {
+                    let val = (2 * r + 1 - dx.abs() - dy.abs()) as f32;
+                    wx[(dy + 4) as usize][(dx + 4) as usize] += dx.signum() as f32 * val * w_scale;
+                }
+                if dy != 0 {
+                    let val = (2 * r + 1 - dx.abs() - dy.abs()) as f32;
+                    wy[(dy + 4) as usize][(dx + 4) as usize] += dy.signum() as f32 * val * w_scale;
+                }
+            }
+        }
+    }
 
     // Process rows in parallel
     let rows: Vec<(usize, Vec<[f32; 3]>, f32)> = (0..h)
@@ -26,20 +44,33 @@ pub fn compute_gradients(
             let mut row_mag = 0.0f32;
 
             for x in 0..w {
-                let y0 = if y > 0 { y - 1 } else { h - 1 };
-                let y2 = if y + 1 < h { y + 1 } else { 0 };
-                let x0 = if x > 0 { x - 1 } else { w - 1 };
-                let x2 = if x + 1 < w { x + 1 } else { 0 };
+                let mut gx = 0.0;
+                let mut gy = 0.0;
 
-                let gx = (h_map[[y0, x2]] - h_map[[y0, x0]]
-                    + 2.0 * (h_map[[y, x2]] - h_map[[y, x0]])
-                    + h_map[[y2, x2]] - h_map[[y2, x0]])
-                    * strength;
+                for ky in -4..=4isize {
+                    let mut cy = y as isize + ky;
+                    if cy < 0 { cy += h as isize; }
+                    else if cy >= h as isize { cy -= h as isize; }
+                    let ucy = cy as usize;
 
-                let gy = (h_map[[y2, x0]] - h_map[[y0, x0]]
-                    + 2.0 * (h_map[[y2, x]] - h_map[[y0, x]])
-                    + h_map[[y2, x2]] - h_map[[y0, x2]])
-                    * strength;
+                    for kx in -4..=4isize {
+                        let w_x = wx[(ky + 4) as usize][(kx + 4) as usize];
+                        let w_y = wy[(ky + 4) as usize][(kx + 4) as usize];
+
+                        if w_x != 0.0 || w_y != 0.0 {
+                            let mut cx = x as isize + kx;
+                            if cx < 0 { cx += w as isize; }
+                            else if cx >= w as isize { cx -= w as isize; }
+                            
+                            let val = h_map[[ucy, cx as usize]];
+                            gx += val * w_x;
+                            gy += val * w_y;
+                        }
+                    }
+                }
+
+                gx *= strength;
+                gy *= strength;
 
                 let nx = -gx;
                 let ny = -gy;

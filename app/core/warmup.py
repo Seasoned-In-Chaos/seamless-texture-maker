@@ -51,18 +51,7 @@ def warmup_all_jit_functions() -> Dict[str, float]:
     except Exception as exc:
         logger.warning("warmup edge_blending_jit failed: %s", exc)
 
-    # --- normal_generator gradients ---
-    try:
-        from .normal_generator import compute_gradients_jit, gradients_to_normals_jit
-
-        t0 = time.perf_counter()
-        grads = compute_gradients_jit(tiny_2ch, 1.0)
-        gradients_to_normals_jit(grads, False)
-        elapsed = (time.perf_counter() - t0) * 1000.0
-        timings["normal_gradients_jit"] = elapsed
-        logger.info("warmup normal_gradients_jit: %.1f ms", elapsed)
-    except Exception as exc:
-        logger.warning("warmup normal_gradients_jit failed: %s", exc)
+    # --- normal_generator gradients (DEPRECATED: Now uses pure OpenCV Scharr) ---
 
     # --- materialize_methods_jit (splat) ---
     try:

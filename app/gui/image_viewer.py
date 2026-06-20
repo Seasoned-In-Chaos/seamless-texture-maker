@@ -53,15 +53,27 @@ CHANNEL_LABELS = {
 def numpy_to_pixmap(img):
     if img is None:
         return None
+        
+    # QPixmap is deeply tied to the display's bit depth (usually 8-bit per channel).
+    # Sending QImage.Format_RGBA64 to QPixmap.fromImage() often fails on Windows, 
+    # resulting in broken/flat images. We must downcast for 2D previews.
+    if img.dtype == np.uint16:
+        img = (img / 256).astype(np.uint8)
+    elif img.dtype != np.uint8:
+        img = np.clip(img, 0, 255).astype(np.uint8)
+        
     if len(img.shape) == 2:
         img = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
     elif img.shape[2] == 4:
         img = cv2.cvtColor(img, cv2.COLOR_BGRA2RGBA)
     else:
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        
+    fmt = QImage.Format.Format_RGBA8888 if img.shape[2] == 4 else QImage.Format.Format_RGB888
+        
     h, w, c = img.shape
-    fmt = QImage.Format.Format_RGBA8888 if c == 4 else QImage.Format.Format_RGB888
-    qimg = QImage(img.data, w, h, w * c, fmt)
+    bpl = w * c
+    qimg = QImage(img.data, w, h, bpl, fmt)
     return QPixmap.fromImage(qimg.copy())
 
 

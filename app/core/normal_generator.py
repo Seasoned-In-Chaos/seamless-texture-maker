@@ -9,6 +9,7 @@ metallic) are generated in parallel via ThreadPoolExecutor.
 from __future__ import annotations
 
 import logging
+import math
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict
@@ -23,11 +24,7 @@ from .assertions import assert_float32
 
 _pbr_cache = ResultCache(max_size=30)
 
-try:
-    from seams_core import compute_gradients as _rs_compute_gradients
-    HAS_RUST_GRADIENTS = True
-except ImportError:
-    HAS_RUST_GRADIENTS = False
+HAS_RUST_GRADIENTS = False  # Deprecated in favor of OpenCV Scharr Pipeline
 logger = logging.getLogger("seams.pbr")
 
 
@@ -39,49 +36,7 @@ def _gray_to_bgr_u8(channel: np.ndarray) -> np.ndarray:
     )
 
 
-@jit(nopython=True, fastmath=True)
-def compute_gradients_jit(height_map, strength=1.0):
-    h, w = height_map.shape
-    gradients = np.zeros((h, w, 2), dtype=np.float32)
-    for y in range(h):
-        for x in range(w):
-            prev_x = height_map[y, (x - 1 + w) % w]
-            next_x = height_map[y, (x + 1) % w]
-            prev_y = height_map[(y - 1 + h) % h, x]
-            next_y = height_map[(y + 1) % h, x]
-            dx = (next_x - prev_x) * strength
-            dy = (next_y - prev_y) * strength
-            gradients[y, x, 0] = dx
-            gradients[y, x, 1] = dy
-    return gradients
-
-
-def compute_gradients_dispatch(height_map: np.ndarray, strength: float):
-    """Dispatch gradient computation to Rust or Numba JIT."""
-    if HAS_RUST_GRADIENTS:
-        return _rs_compute_gradients(height_map, strength)
-    return compute_gradients_jit(height_map, strength)
-
-
-@jit(nopython=True, fastmath=True)
-def gradients_to_normals_jit(gradients, invert_y=False):
-    h, w = gradients.shape[:2]
-    normals = np.zeros((h, w, 3), dtype=np.float32)
-    for y in range(h):
-        for x in range(w):
-            dx = gradients[y, x, 0]
-            dy = gradients[y, x, 1]
-            if invert_y:
-                dy = -dy
-            nx = -dx
-            ny = -dy
-            nz = 1.0
-            mag = np.sqrt(nx * nx + ny * ny + nz * nz)
-            normals[y, x, 0] = nx / mag
-            normals[y, x, 1] = ny / mag
-            normals[y, x, 2] = nz / mag
-    return normals
-
+# Removed compute_gradients_jit and gradients_to_normals_jit as they are replaced by cv2.Scharr pipeline
 
 def _apply_contrast(src: np.ndarray, mode: str) -> np.ndarray:
     mode = (mode or "balanced").lower()
@@ -133,32 +88,162 @@ def _compute_metallic(gray: np.ndarray, params: dict) -> np.ndarray:
     return metal
 
 
+def _compute_slopes(h_map: np.ndarray, filter_type: str, wrap: bool) -> tuple[np.ndarray, np.ndarray]:
+    border_type = cv2.BORDER_WRAP if wrap else cv2.BORDER_REPLICATE
+    padded = cv2.copyMakeBorder(h_map, 1, 1, 1, 1, border_type)
+    if filter_type == "4 sample":
+        # 4-sample uses a simple cross kernel [-1, 0, 1] instead of full 3x3 grids
+        kx = np.array([[-1, 0, 1]], dtype=np.float32) * 0.5
+        ky = np.array([[-1], [0], [1]], dtype=np.float32) * 0.5
+        gx = cv2.filter2D(padded, cv2.CV_32F, kx)
+        gy = cv2.filter2D(padded, cv2.CV_32F, ky)
+    elif filter_type == "prewitt":
+        kx = np.array([[-1, 0, 1], [-1, 0, 1], [-1, 0, 1]], dtype=np.float32) / 6.0
+        ky = np.array([[-1, -1, -1], [0, 0, 0], [1, 1, 1]], dtype=np.float32) / 6.0
+        gx = cv2.filter2D(padded, cv2.CV_32F, kx)
+        gy = cv2.filter2D(padded, cv2.CV_32F, ky)
+    elif filter_type == "central_difference":
+        kx = np.array([[-1, 0, 1]], dtype=np.float32) * 0.5
+        ky = np.array([[-1], [0], [1]], dtype=np.float32) * 0.5
+        gx = cv2.filter2D(padded, cv2.CV_32F, kx)
+        gy = cv2.filter2D(padded, cv2.CV_32F, ky)
+    elif filter_type == "forward_difference":
+        kx = np.array([[0, -1, 1]], dtype=np.float32)
+        ky = np.array([[0], [-1], [1]], dtype=np.float32)
+        gx = cv2.filter2D(padded, cv2.CV_32F, kx)
+        gy = cv2.filter2D(padded, cv2.CV_32F, ky)
+    elif filter_type == "backward_difference":
+        kx = np.array([[-1, 1, 0]], dtype=np.float32)
+        ky = np.array([[-1], [1], [0]], dtype=np.float32)
+        gx = cv2.filter2D(padded, cv2.CV_32F, kx)
+        gy = cv2.filter2D(padded, cv2.CV_32F, ky)
+    elif filter_type == "sobel":
+        # Sobel operator is [1, 2, 1], scale=1/8 gives true mathematical derivative
+        scale = 1.0 / 8.0
+        gx = cv2.Sobel(padded, cv2.CV_32F, 1, 0, scale=scale)
+        gy = cv2.Sobel(padded, cv2.CV_32F, 0, 1, scale=scale)
+    else:
+        # The Scharr operator is [3, 10, 3], scale=1/32 gives true mathematical derivative
+        scale = 1.0 / 32.0
+        gx = cv2.Scharr(padded, cv2.CV_32F, 1, 0, scale=scale)
+        gy = cv2.Scharr(padded, cv2.CV_32F, 0, 1, scale=scale)
+    return gx[1:-1, 1:-1], gy[1:-1, 1:-1]
+
+
 def _compute_normal(h_map: np.ndarray, gray: np.ndarray,
                     params: dict) -> np.ndarray:
-    """Compute normal map (uint8 BGR)."""
-    ni = params.get("normal_intensity", 0.5) * 5.0
-    ns = params.get("normal_smooth", 0.3)
-    nd = params.get("normal_detail", 0.4)
+    """Compute 16-bit normal map (uint16 BGR)."""
+    normal_filter = params.get("normal_filter", "scharr").lower()
+    filter_scale = params.get("filter_scale", "multi-scale (recommended)")
+    wrap = params.get("normal_wrap", True)
+    invert_x = params.get("normal_invert_x", False)
+    invert_y = params.get("normal_invert_y", False)
+    normalize = params.get("normal_normalize", True)
+    if filter_scale == "dudv":
+        normalize = False
+    min_z = params.get("normal_min_z", 0.0)
+    scale = params.get("normal_scale", 0.64) * 8.0  # Multiplier
 
+    # If the user toggled Invert Height from the old UI, we still support it
     normal_height = 1.0 - gray if params.get("normal_invert_height") else gray
-    normal_height = _apply_contrast(normal_height, params.get("normal_contrast", "balanced"))
 
-    blurred = cv2.GaussianBlur(normal_height, (0, 0), sigmaX=0.15 + ns * 10.0)
-    h_map_detail = gray + (gray - blurred) * nd
-    h_map_detail = np.clip(h_map_detail, 0, 1)
-
-    grads = compute_gradients_dispatch(h_map_detail, ni)
-    normals_raw = gradients_to_normals_jit(grads, params.get("normal_format") == "directx")
+    h_map_detail = np.clip(normal_height, 0, 1)
 
     if params.get("normal_map_type") == "bump":
-        return _gray_to_bgr_u8(h_map_detail)
+        return cv2.cvtColor(np.clip(h_map_detail * 65535.0, 0, 65535).astype(np.uint16), cv2.COLOR_GRAY2BGR)
 
+    border_type = cv2.BORDER_WRAP if wrap else cv2.BORDER_REPLICATE
+
+    gx_total = None
+    gy_total = None
+
+    if "multi-scale" in filter_scale:
+        gxs = []
+        gys = []
+        for sigma in [0.0, 1.0, 2.0, 4.0]:
+            if sigma > 0:
+                pad = int(math.ceil(sigma * 3.0)) + 1
+                padded = cv2.copyMakeBorder(h_map_detail, pad, pad, pad, pad, border_type)
+                blurred = cv2.GaussianBlur(padded, (0, 0), sigmaX=sigma)
+                blurred = blurred[pad:-pad, pad:-pad]
+            else:
+                blurred = h_map_detail
+            gx, gy = _compute_slopes(blurred, normal_filter, wrap)
+            gxs.append(gx)
+            gys.append(gy)
+            
+        w3, w5, w7, w9 = 0.5, 0.25, 0.15, 0.1
+        gx_total = (gxs[0]*w3 + gxs[1]*w5 + gxs[2]*w7 + gxs[3]*w9)
+        gy_total = (gys[0]*w3 + gys[1]*w5 + gys[2]*w7 + gys[3]*w9)
+    else:
+        # Discrete filter scales
+        sigma = 0.0
+        if filter_scale == "5x5": sigma = 0.5
+        elif filter_scale == "7x7": sigma = 1.0
+        elif filter_scale == "9x9": sigma = 2.0
+        
+        if sigma > 0:
+            pad = int(math.ceil(sigma * 3.0)) + 1
+            padded = cv2.copyMakeBorder(h_map_detail, pad, pad, pad, pad, border_type)
+            blurred = cv2.GaussianBlur(padded, (0, 0), sigmaX=sigma)
+            blurred = blurred[pad:-pad, pad:-pad]
+        else:
+            blurred = h_map_detail
+            
+        if filter_scale == "4 sample":
+            gx_total, gy_total = _compute_slopes(blurred, "4 sample", wrap)
+        else:
+            gx_total, gy_total = _compute_slopes(blurred, normal_filter, wrap)
+
+    # Apply Scale
+    gx_total *= scale
+    gy_total *= scale
+
+    if invert_x:
+        gx_total = -gx_total
+    if invert_y:
+        gy_total = -gy_total
+
+    # Format fallback
+    if params.get("normal_format") == "directx":
+        gy_total = -gy_total
+
+    # Convert blended slope to normal vector
+    nz = np.ones_like(gx_total)
+
+    if normalize:
+        mag = np.sqrt(gx_total**2 + gy_total**2 + 1.0)
+        nx = -gx_total / mag
+        ny = -gy_total / mag
+        nz = 1.0 / mag
+    else:
+        nx = -gx_total
+        ny = -gy_total
+        nz = np.ones_like(gx_total)
+
+    # NVIDIA Texture Tools Exact Implementation for Min Z
+    if min_z > 0.0:
+        # NVTT simply clamps the Z component directly...
+        mask = nz < min_z
+        nz = np.where(mask, min_z, nz)
+        
+        if normalize:
+            # ...and then blindly re-normalizes the vector, which mathematically means Z 
+            # might drop slightly below min_z again, but perfectly replicates the NVTT output.
+            mag = np.sqrt(nx**2 + ny**2 + nz**2)
+            nx = np.where(mask, nx / mag, nx)
+            ny = np.where(mask, ny / mag, ny)
+            nz = np.where(mask, nz / mag, nz)
+
+    # Pack to display format (B=Z, G=Y, R=X) mapped to [0..1]
     normal_f = np.stack([
-        normals_raw[..., 2] * 0.5 + 0.5,
-        normals_raw[..., 1] * 0.5 + 0.5,
-        normals_raw[..., 0] * 0.5 + 0.5,
+        nz * 0.5 + 0.5,
+        ny * 0.5 + 0.5,
+        nx * 0.5 + 0.5,
     ], axis=-1)
-    return np.clip(normal_f * 255.0, 0, 255).astype(np.uint8)
+    
+    # Return 16-bit array for high fidelity
+    return np.clip(normal_f * 65535.0, 0, 65535).astype(np.uint16)
 
 
 def _compute_ao(gray: np.ndarray, h_map: np.ndarray,
@@ -166,10 +251,14 @@ def _compute_ao(gray: np.ndarray, h_map: np.ndarray,
     """Compute AO map (float32 [0,1])."""
     ai = params.get("ao_intensity", 0.5)
     aspread = params.get("ao_spread", 0.3)
+    ainvert = params.get("ao_invert", False)
     ao_source = gray
     if aspread > 0:
         ao_source = cv2.GaussianBlur(gray, (0, 0), sigmaX=0.75 + aspread * 14.0)
-    return 1.0 - (ao_source * ai)
+    result = 1.0 - (ao_source * ai)
+    if ainvert:
+        result = 1.0 - result
+    return result
 
 
 class NormalGenerator:
@@ -199,14 +288,33 @@ class NormalGenerator:
                 logger.debug("PBR cache HIT")
                 return cached
 
-        # Convert to float32 grayscale [0,1]
+        # Parse float32 grayscale [0,1] based on Height Source
         if image.dtype != np.float32:
             image = image.astype(np.float32)
+        if image.max() > 1.0:
+            image /= 255.0
 
         if image.ndim == 3:
-            gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) / 255.0
+            height_source = params.get("height_source", "average_rgb")
+            if height_source == "red":
+                gray = image[..., 2].copy()
+            elif height_source == "green":
+                gray = image[..., 1].copy()
+            elif height_source == "blue":
+                gray = image[..., 0].copy()
+            elif height_source == "luminance":
+                gray = (image[..., 0] * 0.0722 + image[..., 1] * 0.7152 + image[..., 2] * 0.2126)
+            elif height_source == "max_rgb":
+                gray = np.max(image[..., :3], axis=-1)
+            elif height_source == "alpha_channel" and image.shape[-1] == 4:
+                gray = image[..., 3].copy()
+            else: # average_rgb
+                gray = np.mean(image[..., :3], axis=-1)
         else:
-            gray = image / 255.0
+            if image.max() > 1.0:
+                gray = image / 255.0
+            else:
+                gray = image.copy()
         gray = gray.astype(np.float32)
 
         # ── Phase 1: parallel independent maps ──────────────────────

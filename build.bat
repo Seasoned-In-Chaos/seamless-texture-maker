@@ -6,34 +6,25 @@ echo ========================================
 echo.
 
 :: ── Configuration ──────────────────────────────────────────────────────
-set "PY_VER=3.12"
+set "PY_VER=3.11"
 set "VENV_DIR=.venv-build"
 set "MSVC_ROOT=C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Tools\MSVC"
 
-:: ── Step 1: Find Python 3.12 ────────────────────────────────────────────
-echo [1/8] Finding Python %PY_VER%...
-set "PY312="
+:: ── Step 1: Find Python ────────────────────────────────────────────
+echo [1/8] Finding Python...
+for /f "tokens=*" %%p in ('python -c "import sys; print(sys.executable)"') do set "PY_EXE=%%p"
 
-py -%PY_VER% --version >nul 2>&1
-if not errorlevel 1 (
-    for /f "tokens=*" %%p in ('py -%PY_VER% -c "import sys; print(sys.executable)"') do set "PY312=%%p"
-)
-
-if not defined PY312 if exist "%LOCALAPPDATA%\Python\pythoncore-3.12-64\python.exe" set "PY312=%LOCALAPPDATA%\Python\pythoncore-3.12-64\python.exe"
-if not defined PY312 if exist "%LOCALAPPDATA%\Programs\Python\Python312\python.exe" set "PY312=%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
-if not defined PY312 if exist "C:\Python312\python.exe" set "PY312=C:\Python312\python.exe"
-
-if not defined PY312 (
-    echo [ERROR] Python 3.12 not found!
+if not defined PY_EXE (
+    echo [ERROR] Python not found!
     exit /b 1
 )
-echo [OK] Python 3.12: %PY312%
+echo [OK] Python: %PY_EXE%
 echo.
 
 :: ── Step 2: Create / update build venv ──────────────────────────────────
 echo [2/8] Setting up build virtual environment...
 if not exist "%VENV_DIR%\Scripts\activate.bat" (
-    "%PY312%" -m venv "%VENV_DIR%"
+    "%PY_EXE%" -m venv "%VENV_DIR%"
     if errorlevel 1 (
         echo [ERROR] Failed to create venv!
         exit /b 1
@@ -61,8 +52,8 @@ for /f "tokens=*" %%d in ('dir /b /ad /o-n "%MSVC_ROOT%" 2^>nul') do (
     )
 )
 if "%LINK_FOUND%"=="0" (
-    echo [ERROR] MSVC link.exe not found!
-    exit /b 1
+    echo [WARNING] MSVC link.exe not found! Skipping Rust build.
+    goto :skip_rust_install
 )
 echo [OK] MSVC %MSVC_VER% found.
 echo.
