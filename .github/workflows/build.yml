@@ -3,7 +3,7 @@ name: Build and Release SEAMS
 on:
   push:
     tags:
-      - 'v*.*.*'
+      - 'v3.1*'
   workflow_dispatch:
 
 permissions:
@@ -90,5 +90,5 @@ jobs:
           files: |
             dist/SEAMS_Setup*.exe
             dist/SEAMS.exe
-          name: SEAMS v${{ github.ref_name }}
+          name: SEAMS ${{ github.ref_name }}
           generate_release_notes: true
