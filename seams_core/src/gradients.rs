@@ -18,7 +18,7 @@ pub fn compute_gradients(
     // Compute the 9x9 kernels for X and Y
     let mut wx = [[0.0f32; 9]; 9];
     let mut wy = [[0.0f32; 9]; 9];
-    let radii = [1, 2, 3, 4];
+    let radii: [isize; 4] = [1, 2, 3, 4];
     for (i, &w_scale) in weights.iter().enumerate() {
         if w_scale == 0.0 { continue; }
         let r = radii[i];
