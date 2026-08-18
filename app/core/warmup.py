@@ -75,6 +75,34 @@ def warmup_all_jit_functions() -> Dict[str, float]:
     except Exception as exc:
         logger.warning("warmup splat_jit failed: %s", exc)
 
+    # --- Mirror Tiling (2×2) and Offset + Cross-Fade warmup ---
+    # These methods are pure-NumPy: no JIT compilation required.  Exercising
+    # them here ensures their import paths are resolved and NumPy internal
+    # buffers are warm before the first user action.
+    try:
+        from .seamless import SeamlessProcessor
+
+        tiny_img = np.zeros((64, 64, 3), dtype=np.uint8)
+
+        t0 = time.perf_counter()
+        proc = SeamlessProcessor()
+        proc.load_image(tiny_img)
+        proc.set_parameters(method="mirror")
+        proc.process(preview=True, use_cache=False)
+        elapsed = (time.perf_counter() - t0) * 1000.0
+        timings["mirror_tiling"] = elapsed
+        logger.info("warmup mirror_tiling: %.1f ms", elapsed)
+
+        t0 = time.perf_counter()
+        proc.set_parameters(method="offset_crossfade")
+        proc.process(preview=True, use_cache=False)
+        elapsed = (time.perf_counter() - t0) * 1000.0
+        timings["offset_crossfade"] = elapsed
+        logger.info("warmup offset_crossfade: %.1f ms", elapsed)
+
+    except Exception as exc:
+        logger.warning("warmup mirror/offset_crossfade failed: %s", exc)
+
     total_ms = sum(timings.values())
     logger.info("warmup total: %.1f ms (%d functions)", total_ms, len(timings))
     return timings
