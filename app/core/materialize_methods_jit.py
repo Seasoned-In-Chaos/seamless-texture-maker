@@ -18,97 +18,73 @@ except ImportError:
 
 
 @jit(nopython=True, fastmath=True, cache=True)
-def blend_patch_jit(canvas, patch, mask, top, left, target_h, target_w):
-    """
-    Blends a patch onto the canvas using alpha blending (in-place).
-    Handles clipping. Wrapping is handled by the caller.
-    """
-    ph = patch.shape[0]
-    pw = patch.shape[1]
+def splat_accumulate_jit(accum, weight, patches, masks, coords, indices):
+    """Accumulate weighted patches onto a canvas, wrapping at the edges.
 
-    # Compute canvas region that overlaps with patch
-    y1 = top if top > 0 else 0
-    y2 = top + ph if top + ph < target_h else target_h
-    x1 = left if left > 0 else 0
-    x2 = left + pw if left + pw < target_w else target_w
-
-    if y1 >= y2 or x1 >= x2:
-        return
-
-    # Blend loop — Numba handles this efficiently
-    is_color = (canvas.ndim == 3)
-    if is_color:
-        n_channels = canvas.shape[2]
-    else:
-        n_channels = 1
-
-    for y in range(y1, y2):
-        py = y - top
-        for x in range(x1, x2):
-            px = x - left
-
-            # Get alpha from first channel of mask
-            if mask.ndim == 3:
-                alpha = mask[py, px, 0]
-            else:
-                alpha = mask[py, px]
-
-            if alpha <= 0.001:
-                continue
-
-            if is_color:
-                for c in range(n_channels):
-                    canvas[y, x, c] += (patch[py, px, c] - canvas[y, x, c]) * alpha
-            else:
-                canvas[y, x] += (patch[py, px] - canvas[y, x]) * alpha
-
-
-@jit(nopython=True, fastmath=True, cache=True)
-def synthesis_splat_jit(canvas, patches, masks, coords, indices, target_h, target_w):
-    """
-    Execute the splatting loop using Numba JIT.
-    Handles full wrapping including patches larger than canvas.
+    Rather than compositing patches one over another, this sums
+    ``patch * alpha`` into `accum` and ``alpha`` into `weight`. Dividing the
+    two afterwards gives a weighted average of every patch covering a pixel.
+    That keeps the result independent of splat ordering and, because every
+    write wraps modulo the canvas size, makes the output exactly periodic --
+    i.e. seamlessly tileable by construction.
 
     Args:
-        canvas: Initialized canvas (H, W, C) float32
-        patches: Array of patch images (N, H, W, C) float32
-        masks: Array of masks (N, H, W, 1) float32
-        coords: (num_splats, 2) array of (top, left) int32 coordinates
-        indices: (num_splats,) array of patch indices int32
-        target_h, target_w: Canvas dimensions
+        accum: (H, W, C) float32 accumulator, zeroed by the caller.
+        weight: (H, W) float32 alpha accumulator, zeroed by the caller.
+        patches: (N, ph, pw, C) float32 patch bank.
+        masks: (N, ph, pw) float32 alpha masks.
+        coords: (num_splats, 2) int32 (top, left) placements.
+        indices: (num_splats,) int32 index into the patch bank.
     """
     num_splats = coords.shape[0]
     ph = patches.shape[1]
     pw = patches.shape[2]
+    channels = accum.shape[2]
+    height = accum.shape[0]
+    width = accum.shape[1]
 
     for i in range(num_splats):
         top = coords[i, 0]
         left = coords[i, 1]
         pidx = indices[i]
 
-        patch = patches[pidx]
-        mask = masks[pidx]
-
-        # Calculate how many canvas tiles this patch could span
-        # This handles patches larger than the canvas correctly
-        # We tile the draw offsets to cover all intersections
-        
-        # Range of tile offsets needed in X (patches can overlap multiple tiles when pw > target_w)
-        tiles_x_min = (left) // target_w - 1
-        tiles_x_max = (left + pw) // target_w + 1
-        tiles_y_min = (top) // target_h - 1
-        tiles_y_max = (top + ph) // target_h + 1
-
-        for ty in range(tiles_y_min, tiles_y_max + 1):
-            draw_top = top - ty * target_h
-            # Quick reject if this tile offset is completely outside
-            if draw_top >= target_h or draw_top + ph <= 0:
-                continue
-            for tx in range(tiles_x_min, tiles_x_max + 1):
-                draw_left = left - tx * target_w
-                if draw_left >= target_w or draw_left + pw <= 0:
+        for py in range(ph):
+            y = (top + py) % height
+            for px in range(pw):
+                alpha = masks[pidx, py, px]
+                # Centre-biased masks make legitimate weights very small away
+                # from the patch centre, so this only skips exact zeros --
+                # a coarser cutoff would punch holes in the coverage.
+                if alpha <= 1e-7:
                     continue
-                blend_patch_jit(canvas, patch, mask, draw_top, draw_left,
-                                 target_h, target_w)
+                x = (left + px) % width
+                weight[y, x] += alpha
+                for c in range(channels):
+                    accum[y, x, c] += patches[pidx, py, px, c] * alpha
 
-    return canvas
+    return accum, weight
+
+
+@jit(nopython=True, fastmath=True, cache=True)
+def splat_resolve_jit(accum, weight, fallback, out):
+    """Divide accumulated colour by accumulated alpha.
+
+    Pixels no patch reached (weight ~ 0) fall back to the base canvas so the
+    result never contains holes, even with extreme wobble or falloff.
+    """
+    height = accum.shape[0]
+    width = accum.shape[1]
+    channels = accum.shape[2]
+
+    for y in range(height):
+        for x in range(width):
+            w = weight[y, x]
+            if w > 1e-9:
+                inv = 1.0 / w
+                for c in range(channels):
+                    out[y, x, c] = accum[y, x, c] * inv
+            else:
+                for c in range(channels):
+                    out[y, x, c] = fallback[y, x, c]
+
+    return out

@@ -5,7 +5,7 @@ description: Make textures seamlessly tileable by blending overlapping edges.
 
 # Overlap Blend
 
-The Overlap Blend method creates seamless textures by blending overlapping strips at the seam boundaries. It works by offsetting the image by 50%, blending the overlapping regions, then cropping back to original dimensions.
+The Overlap Blend method creates seamless textures by overlapping the far edge of the image onto the near edge, joining the two around the middle of the overlap strip, then cropping the consumed strip and resizing back to the original dimensions. The transition at that join is deliberately kept narrow — a transition spanning the whole strip would leave a wide band sitting near a 50/50 mix, which visibly double-exposes ("ghosts") strong non-repeating features like faces, logos, or distinct objects.
 
 <Tip>
 Overlap Blend is best for architectural textures, fabrics, and any image with regular patterns that need clean tiling.
@@ -30,14 +30,18 @@ In the Seamless panel, set the **Method** dropdown to **Overlap Blend**.
 |---|---|---|---|
 | Overlap X | 0–50% | 0% | Horizontal overlap blend width as a percentage of image width |
 | Overlap Y | 0–50% | 0% | Vertical overlap blend width as a percentage of image height |
-| Edge Falloff | 0–100% | 0% | Softness of the overlap transition (0% = hard cut, 100% = maximum smoothstep) |
+| Edge Falloff | 0–100% | 0% | Softness of the join only. **0% = a hard, unblended seam** (not "no effect" — Overlap X/Y still apply); 100% = the widest permitted soft gradient |
+
+<Note>
+Overlap X/Y replace image content, so they always change the result — the live preview responds to them at any Edge Falloff, including 0%. Edge Falloff controls only how soft the join looks.
+</Note>
 
 ### How It Works
 
-1. **Offset** — The image is shifted by 50% in both X and Y, creating a wrapped cross at the center
-2. **Blend strips** — Horizontal and vertical strips at the seam are blended using cosine-weighted falloff
-3. **Falloff** — Hardness = `1.0 / max(0.001, falloff)`, applied via smoothstep: `mask² × (3 - 2 × mask)`
-4. **Crop** — The image is cropped and resized back to original dimensions
+1. **Overlap** — The far-edge strip (width = `overlap_x` × image width) is overlapped onto the near-edge strip. The leading portion is a solid copy of the far edge — that copied run *is* the overlap, and it's what makes the tile wrap. Likewise bottom onto top for `overlap_y`
+2. **Join at the midpoint** — Around the middle of the strip the image switches back to its original content. At Edge Falloff 0% this is a hard step (half the strip is a solid copy, exactly like a plain cut); raising falloff eases the switch across a wider span
+3. **Transition is capped** — It never spans more than half the overlap strip, and uses a double-smoothstep curve so the near-50/50 zone stays narrow. This is what prevents ghosting at high falloff
+4. **Crop** — The consumed strip is cropped off and the image is resized back to its original dimensions
 
 ### Blend Width
 
