@@ -1,21 +1,21 @@
 ---
 title: Corona Renderer
-description: Export PBR textures for Corona Renderer with glossiness conversion and MaxScript generation.
+description: Export PBR textures for Corona Renderer with glossiness conversion.
 ---
 
 # Corona Renderer Export
 
-SEAMS exports textures optimized for Chaos Corona with glossiness conversion, OpenGL normal convention, and 3ds Max MaxScript generation.
+SEAMS exports textures optimized for Chaos Corona with glossiness conversion and OpenGL normal convention. It writes texture maps only.
 
 ## Corona Default Settings
 
 | Setting | Value |
 |---|---|
-| Workflow | Metallic/Roughness |
+| Workflow | Roughness |
 | Normal Format | OpenGL (Y+) |
 | Format | PNG |
 | Bit Depth | 16-bit |
-| Color Management | Renderer Preset |
+| Output | Texture maps only |
 
 ## Corona-Specific Options
 
@@ -24,11 +24,9 @@ All options default to **enabled**:
 | Option | Description |
 |---|---|
 | Convert Roughness to Glossiness | Inverts roughness to produce glossiness map for CoronaPhysicalMtl |
-| Generate CoronaPhysicalMtl preset | Creates a MaxScript to set up the material in 3ds Max |
 | Gamma-safe export | Ensures correct gamma handling for linear vs sRGB textures |
 | Use CoronaNormal compatibility | Normal map format compatible with CoronaNormal map |
 | Clamp displacement values | Clamps displacement to `[8, 247]` range to prevent artifacts |
-| Auto-generate 3ds Max material | Creates a `.ms` MaxScript for automatic material setup |
 
 ## Glossiness Conversion
 
@@ -40,27 +38,14 @@ glossiness = bitwise_not(roughness_gray)
 
 This produces an inverted roughness map suitable for the Glossiness input.
 
-## MaxScript
-
-When "Auto-generate 3ds Max material" is enabled, a MaxScript file is created:
-
-```
-MaterialName_CORONA_3dsmax.ms
-```
-
-<Note>
-The MaxScript currently contains placeholder comments and map paths. Full material creation logic is planned for a future update.
-</Note>
-
 ## File Naming
 
 ```
 MaterialName_CORONA_BaseColor.png
 MaterialName_CORONA_Normal.png
 MaterialName_CORONA_Glossiness.png
-MaterialName_CORONA_Metallic.png
 MaterialName_CORONA_AO.png
-MaterialName_CORONA_Height.png
+MaterialName_CORONA_Displacement.png
 ```
 
 ## Tips for Corona

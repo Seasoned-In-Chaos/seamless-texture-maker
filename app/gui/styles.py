@@ -536,6 +536,26 @@ QCheckBox::indicator:checked, QRadioButton::indicator:checked {
     border-color: #d4c9ff;
 }
 
+QWidget#NVTTFilterBox QRadioButton::indicator, QWidget#NVTTFilterBox QCheckBox::indicator {
+    width: 14px;
+    height: 14px;
+    border: 1px solid #4a546e;
+    border-radius: 2px;
+    background: #121622;
+}
+
+QWidget#NVTTFilterBox QRadioButton::indicator:checked, QWidget#NVTTFilterBox QCheckBox::indicator:checked {
+    background: #a3b3cc;
+    border-color: #dce6f5;
+}
+
+QWidget#NVTTFilterBox QRadioButton, QWidget#NVTTFilterBox QCheckBox {
+    font-weight: 500;
+    font-size: 11px;
+    color: #c0c6d8;
+    spacing: 6px;
+}
+
 QWidget#PanelFooter {
     background: #07080d;
     border-top: 1px solid #171b2a;

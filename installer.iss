@@ -53,7 +53,7 @@ var
 begin
   if CurUninstallStep = usPostUninstall then
   begin
-    DataDir := ExpandConstant('{appdata}\SeamlessTextureMaker');
+    DataDir := ExpandConstant('{userappdata}\SeamlessTextureMaker');
     if DirExists(DataDir) then
     begin
       if MsgBox(

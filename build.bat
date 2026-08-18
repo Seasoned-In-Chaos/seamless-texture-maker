@@ -6,9 +6,15 @@ echo ========================================
 echo.
 
 :: ── Configuration ──────────────────────────────────────────────────────
-set "PY_VER=3.11"
+set "PY_VER=3.11+"
 set "VENV_DIR=.venv-build"
-set "MSVC_ROOT=C:\Program Files (x86)\Microsoft Visual Studio\18\BuildTools\VC\Tools\MSVC"
+set "MSVC_ROOT="
+set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+if exist "%VSWHERE%" (
+    for /f "usebackq delims=" %%i in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "MSVC_ROOT=%%i\VC\Tools\MSVC"
+)
+if not defined MSVC_ROOT if exist "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC" set "MSVC_ROOT=C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC"
+if not defined MSVC_ROOT if exist "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC" set "MSVC_ROOT=C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC"
 
 :: ── Step 1: Find Python ────────────────────────────────────────────
 echo [1/8] Finding Python...

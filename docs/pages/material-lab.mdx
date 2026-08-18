@@ -1,11 +1,11 @@
 ---
 title: Material Lab
-description: Generate and customize 8 PBR maps from a single image.
+description: Generate and customize 6 PBR maps from a single image.
 ---
 
 # Material Lab
 
-The Material Lab generates 8 PBR maps from your seamless texture, with real-time controls for each channel. Switch to it by pressing `3` or clicking Material Lab in the navigation rail.
+The Material Lab generates 6 PBR maps from your seamless texture, with real-time controls for each channel. Switch to it by pressing `3` or clicking Material Lab in the navigation rail.
 
 ## PBR Maps
 
@@ -13,20 +13,17 @@ All maps are generated automatically from the grayscale luminance of the input i
 
 | Map | Method | Output |
 |---|---|---|
-| **Normal** | Sobel gradient-based (Rust-accelerated when available) | RGB, OpenGL or DirectX convention |
+| **Normal** | Tileable slope-space gradient | RGB, OpenGL or DirectX convention |
 | **Roughness** | Linear scaling from grayscale | Grayscale, 0–1 range |
-| **Metallic** | Scaled + Gaussian blurred from grayscale | Grayscale, 0–1 range |
 | **AO** | Multi-scale unsharp mask (3 scales) | Grayscale, 1.0=lit, 0.0=occluded |
-| **Height** | Contrast-adjusted, optionally blurred grayscale | Grayscale |
 | **Displacement** | Height scaled by `(0.25 + strength × 1.75)` | Grayscale |
 | **Opacity** | Threshold + softness transition | Grayscale alpha mask |
-| **Emissive** | Grayscale × intensity × tint | RGB with tint |
 
 Maps are generated in parallel using a ThreadPoolExecutor (4 workers for Phase 1, 2 for Phase 2). Results are cached (up to 30 entries).
 
 ---
 
-## Normal & Bump
+## Normal Map
 
 | Control | Type | Range | Default | Description |
 |---|---|---|---|---|
@@ -35,7 +32,6 @@ Maps are generated in parallel using a ThreadPoolExecutor (4 workers for Phase 1
 | Smoothness | Slider | 0–100% | 0% | Gaussian blur of height source before normal calculation |
 | Invert Height | Checkbox | — | Unchecked | Inverts height source before calculation |
 | Invert Y (DirectX) | Checkbox | — | Unchecked | Flips green channel for DirectX convention |
-| Map Type | Combo | Normal Map (RGB), Bump Map (Grayscale) | Normal Map (RGB) | Output format |
 | Contrast Handling | Combo | Balanced, Auto, Soft, Sharp | Balanced | Contrast adjustment mode |
 
 ### Contrast Modes
@@ -62,13 +58,6 @@ When exporting with a renderer that expects glossiness (Corona, V-Ray with "Conv
 </Note>
 
 ---
-
-## Metallic
-
-| Control | Type | Range | Default | Description |
-|---|---|---|---|---|
-| Metalness | Slider | 0–100% | 0% | Metallic intensity (0–2.0 internally) |
-| Edge Softness | Slider | 0–100% | 20% | Gaussian blur (sigma = `0.35 + edge × 8`) |
 
 ---
 
@@ -104,26 +93,6 @@ The AO generator uses multi-scale unsharp masking at 3 scales (radius/4, radius/
 
 ---
 
-## Emissive
-
-| Control | Type | Range | Default | Description |
-|---|---|---|---|---|
-| Glow Power | Slider | 0–100% | 0% | Emissive intensity |
-| Glow Tint | Combo | White, Warm, Cool, Custom | White | Emissive color tint |
-
-### Tint Colors
-
-| Tint | RGB (BGR internally) |
-|---|---|
-| White | (1.0, 1.0, 1.0) |
-| Warm | (0.55, 0.82, 1.0) — orange |
-| Cool | (1.0, 0.78, 0.48) — blue |
-| Custom | (0.95, 0.55, 1.0) — purple |
-
-<Warning>
-The "Custom" tint is currently hard-coded to purple. It does not open a color picker.
-</Warning>
-
 ---
 
 ## Channel Dock
@@ -135,10 +104,8 @@ At the bottom of the 2D viewer, a horizontal strip shows 8 channel cards:
 | Base Color | sRGB | Yes (selected) |
 | Normal | Linear | Yes |
 | Roughness | Linear | Yes |
-| Metallic | Linear | Yes |
 | AO | Linear | Yes |
-| Height | Linear | Yes |
+| Displacement | Linear | Yes |
 | Opacity | Linear | Yes |
-| Emissive | sRGB | Yes |
 
 Click a card to isolate that channel in the 3D viewport and display it in the 2D viewer. Each card shows a thumbnail preview, channel name, colorspace label, and resolution. Uncheck a card's checkbox to disable it.

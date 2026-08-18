@@ -111,10 +111,19 @@ def load_image(filepath):
     if image is None:
         raise IOError(f"Failed to decode image: {filepath}")
 
-    if metadata.width == 0 or metadata.height == 0:
-        metadata.height, metadata.width = image.shape[:2]
-        metadata.channels = 1 if image.ndim == 2 else image.shape[2]
-        metadata.bit_depth = 16 if image.dtype == np.uint16 else 32 if image.dtype == np.float32 else 8
+    # OpenCV's decoded array is authoritative for dimensions, channels and
+    # bit depth. PIL reports many RGB 16-bit files as ordinary RGB metadata.
+    metadata.height, metadata.width = image.shape[:2]
+    metadata.channels = 1 if image.ndim == 2 else image.shape[2]
+    if image.dtype == np.uint8:
+        metadata.bit_depth = 8
+    elif image.dtype == np.uint16:
+        metadata.bit_depth = 16
+    elif image.dtype in (np.float16, np.float32):
+        metadata.bit_depth = 32
+    else:
+        metadata.bit_depth = image.dtype.itemsize * 8
+    if not metadata.format:
         metadata.format = os.path.splitext(filepath)[1].lstrip(".").upper()
     
     return image, metadata
@@ -160,17 +169,46 @@ def save_image(image, filepath, metadata=None, format=None, quality=95):
     directory = os.path.dirname(filepath) if os.path.dirname(filepath) else '.'
     ensure_writable_directory(directory)
 
-    image = _coerce_image_for_save(image)
-    
+    image = _coerce_image_for_save(image, format)
+
     if format == 'exr':
-        exr_image = image.astype(np.float32) / 255.0 if image.dtype == np.uint8 else image.astype(np.float32)
+        exr_image = image.astype(np.float32, copy=False)
+        if exr_image.size and float(np.nanmax(exr_image)) > 1.0:
+            exr_image = exr_image / 255.0
+        exr_image = np.nan_to_num(exr_image, nan=0.0, posinf=1.0, neginf=0.0)
+        fd, tmp_path = tempfile.mkstemp(prefix=".seams-", suffix=".exr", dir=directory)
+        os.close(fd)
         try:
-            if cv2.imwrite(filepath, exr_image):
-                return True
+            if not cv2.imwrite(tmp_path, exr_image):
+                raise IOError("OpenCV did not write the EXR output.")
+            os.replace(tmp_path, filepath)
+            return True
         except Exception as exc:
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
             log_exception(logger, f"Failed to write EXR {filepath}", exc)
             raise IOError("EXR export failed. OpenCV may not have OpenEXR support enabled; choose PNG or TIFF.") from exc
-        raise IOError("EXR export failed. OpenCV did not write the output file.")
+
+    # OpenCV is required for multi-channel 16-bit PNG/TIFF because PIL does
+    # not reliably preserve 16-bit BGR/RGBA arrays across all Windows builds.
+    if image.dtype == np.uint16 and format in {"png", "tiff"}:
+        suffix = ".png" if format == "png" else ".tiff"
+        fd, tmp_path = tempfile.mkstemp(prefix=".seams-", suffix=suffix, dir=directory)
+        os.close(fd)
+        try:
+            if not cv2.imwrite(tmp_path, image):
+                raise IOError("OpenCV did not write the 16-bit output.")
+            os.replace(tmp_path, filepath)
+            return True
+        except Exception as exc:
+            try:
+                os.remove(tmp_path)
+            except OSError:
+                pass
+            log_exception(logger, f"Failed to save 16-bit image {filepath}", exc)
+            raise
 
     # Convert BGR to RGB for PIL
     if len(image.shape) == 3:
@@ -350,15 +388,21 @@ def _cleanup_stale_temp_files(directory):
         return
 
 
-def _coerce_image_for_save(image):
+def _coerce_image_for_save(image, format="png"):
     if image.dtype == np.uint8:
         return image
     if np.issubdtype(image.dtype, np.floating):
         finite = np.nan_to_num(image, nan=0.0, posinf=1.0, neginf=0.0)
+        if format == "exr":
+            if finite.size and finite.max(initial=0.0) > 1.0:
+                finite = finite / 255.0
+            return np.clip(finite, 0.0, 1.0).astype(np.float32)
         if finite.max(initial=0.0) <= 1.0:
             return np.clip(finite * 255.0, 0, 255).astype(np.uint8)
         return np.clip(finite, 0, 255).astype(np.uint8)
     if image.dtype == np.uint16:
+        if format in {"png", "tiff"}:
+            return image
         return (image / 257).astype(np.uint8)
     return np.clip(image, 0, 255).astype(np.uint8)
 
@@ -382,7 +426,16 @@ def load_as_float32(path: str) -> np.ndarray:
     if image_bgr.shape[2] == 4:
         image_bgr = cv2.cvtColor(image_bgr, cv2.COLOR_BGRA2BGR)
     image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
-    return image_rgb.astype(np.float32) / 255.0
+    if image_bgr.dtype == np.uint16:
+        scale = 65535.0
+    elif image_bgr.dtype == np.uint8:
+        scale = 255.0
+    else:
+        scale = 1.0
+    result = image_rgb.astype(np.float32)
+    if scale != 1.0:
+        result /= scale
+    return np.clip(result, 0.0, 1.0)
 
 
 def save_from_float32(
@@ -402,6 +455,8 @@ def save_from_float32(
     """
     if arr.dtype == np.float32 or np.issubdtype(arr.dtype, np.floating):
         uint8 = np.clip(arr * 255.0, 0, 255).astype(np.uint8)
+    elif arr.dtype == np.uint16:
+        uint8 = (arr / 257.0).astype(np.uint8)
     else:
         uint8 = arr.astype(np.uint8)
 

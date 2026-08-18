@@ -1,7 +1,7 @@
 import os
 
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QPainter, QPixmap
+from PyQt6.QtGui import QColor, QGuiApplication, QPainter, QPixmap
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -32,22 +32,16 @@ RENDERERS = {
         "badge": "CORONA",
         "quick": "Archviz optimized",
         "description": "Optimized for 3ds Max + Corona Physical Material workflow.",
-        "workflow": "Metallic / Roughness",
+        "workflow": "Roughness",
         "format": "PNG",
         "normal": "OpenGL (Y+)",
         "bit_depth": "16-bit",
-        "colorspace": "Renderer Preset",
         "token": "CORONA",
         "formats": ["PNG", "TIFF", "EXR"],
         "options": [
             "Convert Roughness to Glossiness",
-            "Generate CoronaPhysicalMtl preset",
-            "Gamma-safe export",
-            "Use CoronaNormal compatibility",
             "Clamp displacement values",
-            "Auto-generate 3ds Max material",
         ],
-        "material_option": "Generate Corona material",
     },
     "vray": {
         "name": "V-Ray",
@@ -55,22 +49,17 @@ RENDERERS = {
         "badge": "VRAY",
         "quick": "V-Ray 6+ material workflow",
         "description": "Optimized for V-Ray 6+ material workflow.",
-        "workflow": "Metallic / Roughness",
+        "workflow": "Roughness",
         "format": "TIFF",
         "normal": "DirectX (Y-)",
         "bit_depth": "16-bit",
-        "colorspace": "Renderer Preset",
         "token": "VRAY",
         "formats": ["PNG", "TIFF", "EXR"],
         "options": [
             "Convert Roughness to Glossiness",
-            "VRayBitmap optimized",
-            "Generate VRayMtl preset",
-            "Linear workflow support",
             "Reflection glossiness mode",
-            "VRayDisplacementMod support",
+            "Clamp displacement values",
         ],
-        "material_option": "Generate VRay material",
     },
     "ue5": {
         "name": "Unreal Engine 5",
@@ -78,23 +67,15 @@ RENDERERS = {
         "badge": "UE5",
         "quick": "Game-ready packed export",
         "description": "Game-ready optimized UE5 material export pipeline.",
-        "workflow": "Metallic / Roughness",
+        "workflow": "Roughness",
         "format": "PNG",
         "normal": "DirectX (Y-)",
         "bit_depth": "8-bit",
-        "colorspace": "Renderer Preset",
         "token": "UE5",
         "formats": ["PNG", "TGA", "EXR"],
         "options": [
             "ORM Texture Packing",
-            "Nanite displacement ready",
-            "Virtual texture ready",
-            "Compression optimized",
-            "Auto power-of-two validation",
-            "Generate UE5 material instance",
-            "sRGB auto assignment",
         ],
-        "material_option": "Generate UE5 material",
     },
     "blender": {
         "name": "Blender",
@@ -102,22 +83,13 @@ RENDERERS = {
         "badge": "BLEND",
         "quick": "Cycles/Eevee workflow",
         "description": "Optimized for Blender Principled BSDF workflow.",
-        "workflow": "Metallic / Roughness",
+        "workflow": "Roughness",
         "format": "PNG",
         "normal": "OpenGL (Y+)",
         "bit_depth": "16-bit",
-        "colorspace": "Renderer Preset",
         "token": "BLENDER",
         "formats": ["PNG", "EXR"],
-        "options": [
-            "Generate Principled BSDF setup",
-            "Auto node linking",
-            "Cycles optimized",
-            "Eevee compatible",
-            "Non-color data assignment",
-            "Height to displacement node setup",
-        ],
-        "material_option": "Generate Blender shader",
+        "options": [],
     },
     "generic": {
         "name": "Generic PBR",
@@ -125,21 +97,13 @@ RENDERERS = {
         "badge": "PBR",
         "quick": "Universal clean naming",
         "description": "Universal renderer-independent PBR texture export.",
-        "workflow": "Metallic / Roughness",
+        "workflow": "Roughness",
         "format": "PNG",
         "normal": "OpenGL (Y+)",
         "bit_depth": "16-bit",
-        "colorspace": "Manual",
         "token": "PBR",
         "formats": ["PNG", "TIFF", "EXR"],
-        "options": [
-            "Metallic/Roughness workflow",
-            "Specular/Glossiness workflow",
-            "OpenGL normal support",
-            "DirectX normal support",
-            "Clean universal naming",
-        ],
-        "material_option": "Generate .mat",
+        "options": [],
     },
 }
 
@@ -147,12 +111,10 @@ RENDERERS = {
 MAPS = [
     ("BaseColor", "sRGB", True),
     ("Roughness", "Linear", True),
-    ("Metallic", "Linear", True),
     ("Normal", "Linear", True),
     ("AO", "Linear", True),
-    ("Height", "Linear", True),
+    ("Displacement", "Linear", True),
     ("Opacity", "Linear", False),
-    ("Emissive", "sRGB", False),
 ]
 
 
@@ -279,8 +241,13 @@ class PBRExportDialog(QDialog):
         self.map_cards = {}
 
         self.setWindowTitle("Production Export Pipeline")
-        self.resize(1040, 820)
-        self.setMinimumSize(940, 720)
+        available = QGuiApplication.primaryScreen().availableGeometry()
+        available_width = max(320, available.width() - 24)
+        available_height = max(360, available.height() - 48)
+        dialog_width = min(1040, available_width)
+        dialog_height = min(820, available_height)
+        self.resize(dialog_width, dialog_height)
+        self.setMinimumSize(min(720, available_width), min(560, available_height))
         self.setStyleSheet(self._stylesheet())
 
         root = QVBoxLayout(self)
@@ -297,7 +264,7 @@ class PBRExportDialog(QDialog):
 
         title = QLabel("PRODUCTION EXPORT PIPELINES")
         title.setObjectName("DialogTitle")
-        subtitle = QLabel("Renderer-specific presets with workflow conversion, naming, color management and material setup sidecars.")
+        subtitle = QLabel("Renderer-specific presets with workflow conversion, naming and texture-map export.")
         subtitle.setObjectName("DialogSubtitle")
         subtitle.setWordWrap(True)
         layout.addWidget(title)
@@ -325,33 +292,27 @@ class PBRExportDialog(QDialog):
         settings_layout = QGridLayout(settings)
         settings_layout.setContentsMargins(16, 16, 16, 16)
         settings_layout.setSpacing(12)
-        self.workflow_combo = self._combo(["Metallic / Roughness", "Specular / Glossiness"])
+        self.workflow_combo = self._combo(["Roughness", "Specular / Glossiness"])
         self.format_combo = self._combo(["PNG", "TIFF", "EXR"])
         self.normal_combo = self._combo(["OpenGL (Y+)", "DirectX (Y-)"])
-        self.bit_depth_combo = self._combo(["8-bit", "16-bit", "32-bit"])
+        self.bit_depth_combo = self._combo(["8-bit", "16-bit"])
+        self.format_combo.currentTextChanged.connect(self._sync_bit_depth_options)
         self.resolution_combo = self._combo(["1K", "2K", "4K", "8K"])
         self.resolution_combo.setCurrentText("4K")
-        self.compression_combo = self._combo(["Balanced", "Lossless", "Render Farm Safe"])
-        self.padding_combo = self._combo(["0 px", "8 px", "16 px", "32 px"])
-        self.colorspace_combo = self._combo(["Renderer Preset", "sRGB", "Linear", "ACES"])
-        self.texture_scale_combo = self._combo(["1.0", "0.5", "2.0", "Real-world"])
         rows = [
             ("Workflow", self.workflow_combo),
             ("Texture Format", self.format_combo),
             ("Normal Format", self.normal_combo),
             ("Bit Depth", self.bit_depth_combo),
             ("Resolution", self.resolution_combo),
-            ("Compression", self.compression_combo),
-            ("Padding / Dilation", self.padding_combo),
-            ("Color Management", self.colorspace_combo),
-            ("Texture Scale", self.texture_scale_combo),
         ]
         for i, (label, widget) in enumerate(rows):
             settings_layout.addWidget(self._field_label(label), i // 3 * 2, i % 3)
             settings_layout.addWidget(widget, i // 3 * 2 + 1, i % 3)
         layout.addWidget(settings)
 
-        layout.addWidget(self._section("RENDERER MATERIAL LOGIC"))
+        self.options_section = self._section("RENDERER OPTIONS")
+        layout.addWidget(self.options_section)
         self.options_panel = QFrame()
         self.options_panel.setObjectName("SettingsPanel")
         self.options_layout = QGridLayout(self.options_panel)
@@ -368,24 +329,6 @@ class PBRExportDialog(QDialog):
             self.map_cards[name] = card
             map_grid.addWidget(card, i // 4, i % 4)
         layout.addLayout(map_grid)
-
-        layout.addWidget(self._section("AUTO MATERIAL GENERATION"))
-        material_panel = QFrame()
-        material_panel.setObjectName("SettingsPanel")
-        mat_layout = QGridLayout(material_panel)
-        mat_layout.setContentsMargins(16, 14, 16, 14)
-        self.material_checks = {}
-        for i, label in enumerate([
-            "Generate .mat",
-            "Generate Blender shader",
-            "Generate UE5 material",
-            "Generate Corona material",
-            "Generate VRay material",
-        ]):
-            chk = QCheckBox(label)
-            self.material_checks[label] = chk
-            mat_layout.addWidget(chk, i // 3, i % 3)
-        layout.addWidget(material_panel)
 
         layout.addWidget(self._section("OUTPUT"))
         output = QFrame()
@@ -498,11 +441,11 @@ class PBRExportDialog(QDialog):
         self.format_combo.setCurrentText(preset["format"])
         self.normal_combo.setCurrentText(preset["normal"])
         self.bit_depth_combo.setCurrentText(preset["bit_depth"])
-        self.colorspace_combo.setCurrentText(preset["colorspace"])
+        self._sync_bit_depth_options()
+        self.bit_depth_combo.setCurrentText(preset["bit_depth"])
         self._rebuild_options(preset)
-        self._sync_material_checks(preset)
         for name, card in self.map_cards.items():
-            card.set_export_state(preset["bit_depth"], packed=(key == "ue5" and name in ("AO", "Roughness", "Metallic")))
+            card.set_export_state(preset["bit_depth"], packed=(key == "ue5" and name in ("AO", "Roughness")))
 
     def _rebuild_options(self, preset):
         while self.options_layout.count():
@@ -511,15 +454,29 @@ class PBRExportDialog(QDialog):
             if widget is not None:
                 widget.deleteLater()
         self.option_checks = {}
+        has_options = bool(preset["options"])
+        self.options_section.setVisible(has_options)
+        self.options_panel.setVisible(has_options)
         for i, label in enumerate(preset["options"]):
             chk = QCheckBox(label)
             chk.setChecked(True)
             self.option_checks[label] = chk
             self.options_layout.addWidget(chk, i // 3, i % 3)
 
-    def _sync_material_checks(self, preset):
-        for label, chk in self.material_checks.items():
-            chk.setChecked(label == preset["material_option"])
+    def _sync_bit_depth_options(self, *_args):
+        """Expose only bit depths supported by the selected file format."""
+        current = self.bit_depth_combo.currentText()
+        is_exr = self.format_combo.currentText().lower() == "exr"
+        desired = ["8-bit", "16-bit", "32-bit"] if is_exr else ["8-bit", "16-bit"]
+        if [self.bit_depth_combo.itemText(i) for i in range(self.bit_depth_combo.count())] != desired:
+            self.bit_depth_combo.blockSignals(True)
+            self.bit_depth_combo.clear()
+            self.bit_depth_combo.addItems(desired)
+            self.bit_depth_combo.blockSignals(False)
+        if current in desired:
+            self.bit_depth_combo.setCurrentText(current)
+        elif "16-bit" in desired:
+            self.bit_depth_combo.setCurrentText("16-bit")
 
     def _browse_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "Select Export Directory", self.folder_input.text())
@@ -551,7 +508,6 @@ class PBRExportDialog(QDialog):
         preset = RENDERERS[self.renderer_key]
         maps = {name: card.checked for name, card in self.map_cards.items()}
         options = {label: chk.isChecked() for label, chk in self.option_checks.items()}
-        material_options = {label: chk.isChecked() for label, chk in self.material_checks.items()}
         return {
             "renderer_key": self.renderer_key,
             "engine": preset["name"],
@@ -563,13 +519,8 @@ class PBRExportDialog(QDialog):
             "bit_depth": self.bit_depth_combo.currentText(),
             "workflow": self.workflow_combo.currentText(),
             "normal_format": self.normal_combo.currentText(),
-            "colorspace": self.colorspace_combo.currentText(),
-            "compression": self.compression_combo.currentText(),
-            "padding": self.padding_combo.currentText(),
-            "texture_scale": self.texture_scale_combo.currentText(),
             "maps": maps,
             "options": options,
-            "material_options": material_options,
             "packing": self.renderer_key == "ue5" and options.get("ORM Texture Packing", True),
             "create_subfolder": self.subfolder_chk.isChecked(),
             "subfolder_name": f"{self.name_input.text().strip() or 'Material_01'}_{preset['token']}",

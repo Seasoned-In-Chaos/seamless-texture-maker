@@ -7,6 +7,7 @@ so the first user action is stall-free.
 import math
 import random
 import os
+import sys
 from PyQt6.QtWidgets import QWidget, QApplication
 from PyQt6.QtCore import Qt, QTimer, QPointF, QRectF, pyqtSignal, QThread, QRect
 from PyQt6.QtGui import (
@@ -101,12 +102,25 @@ class SplashScreen(QWidget):
             avail.y() + (avail.height() - self.height()) // 2,
         )
 
-        # Load real logo
-        logo_path = os.path.join(
-            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-            'resources', 'logo.png'
+        # Load real logo — handle both dev mode and PyInstaller frozen mode.
+        self._logo_pixmap = None
+        _search_roots = []
+        if getattr(sys, 'frozen', False):
+            _meipass = getattr(sys, '_MEIPASS', None)
+            if _meipass:
+                _search_roots.append(_meipass)
+            _search_roots.append(os.path.dirname(os.path.abspath(sys.executable)))
+        _search_roots.append(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         )
-        self._logo_pixmap = QPixmap(logo_path) if os.path.exists(logo_path) else None
+        for _root in _search_roots:
+            for _rel in ('resources/logo.png', 'resources/icon.png', 'logo.png'):
+                _p = os.path.join(_root, _rel)
+                if os.path.exists(_p):
+                    self._logo_pixmap = QPixmap(_p)
+                    break
+            if self._logo_pixmap is not None:
+                break
 
         # Animation state
         self._tick = 0.0

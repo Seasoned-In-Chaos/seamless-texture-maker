@@ -17,8 +17,8 @@ description: Known limitations and constraints in SEAMS.
 
 ## Platform
 
-- **Windows only** — The auto-updater (batch-file swap) and single-instance mutex are Windows-specific
-- **No macOS or Linux support** — The app may run on other platforms but auto-update and mutex enforcement won't work
+- **Windows only** — The single-instance mutex is Windows-specific
+- **No macOS or Linux support** — The app may run on other platforms but mutex enforcement won't work
 
 ## Theme
 
@@ -40,13 +40,11 @@ description: Known limitations and constraints in SEAMS.
 
 ## Material Lab
 
-- **Emissive "Custom" tint** — The "Custom" option is hard-coded to purple `(0.95, 0.55, 1.0)`. There is no color picker.
 - **PBR from grayscale only** — All PBR maps are derived from the grayscale luminance of the input image. There are no per-channel controls or color-aware map generation.
 
 ## Export
 
-- **Padding/dilation not implemented** — The export dialog exposes padding options (0, 8, 16, 32px) but dilation processing is not implemented in the pipeline.
-- **Sidecar scripts are placeholders** — The auto-generated MaxScript (Corona/V-Ray), Python (Blender), and UE5 material instance files contain map paths and placeholder comments, not full material setup logic.
+- **No material sidecars** — Renderer export writes selected texture maps only. Material node/script generation is intentionally not part of the export pipeline.
 - **Resolution resizes, not supersamples** — Selecting a higher resolution than the source upscales the image. It does not add detail.
 - **JPEG alpha stripped** — JPEG format does not support transparency. Alpha channels are automatically removed.
 

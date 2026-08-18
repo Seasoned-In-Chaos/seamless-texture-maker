@@ -13,7 +13,7 @@ Press `Ctrl+O` or drag-and-drop an image onto the 2D viewport. SEAMS supports:
 
 - PNG, JPEG, TIFF, TGA, EXR
 - Minimum 64×64, maximum 8192×8192
-- 8-bit, 16-bit, and 32-bit depth
+- 8-bit, 16-bit, and 32-bit float EXR depth
 - sRGB and linear color spaces
 
 The image appears in the viewport with file info in the navigation rail's Quick Info card.
@@ -34,29 +34,26 @@ Delighting is destructive — it modifies the base image and pushes the previous
 
 Press `2` to switch to the Seamless panel.
 
-1. Choose a **Method**: Overlap Blend or Splat Synthesis
+1. Choose a **Method**: Offset + Cross-Fade, Mirror Tiling, Overlap Blend, or Splat Synthesis
 2. Adjust the controls for your chosen method
 3. The preview updates live as you move sliders
 4. After a 400ms pause, full-resolution processing runs automatically
 
 <Tip>
-Use **Overlap Blend** for architectural textures, fabrics, and any image with regular patterns. Use **Splat Synthesis** for organic materials like stone, bark, and terrain where you want to break up repetition.
+Use **Offset + Cross-Fade** for a fast, predictable standard blend. Use **Mirror Tiling** when preserving every source detail and guaranteeing reflected edge continuity is most important. Use **Overlap Blend** for architectural textures and fabrics, or **Splat Synthesis** for organic materials where you want to break up repetition.
 </Tip>
 
 ## 4. Generate PBR Maps
 
 Press `3` to switch to the Material Lab.
 
-All 8 PBR maps are generated automatically from your seamless texture:
+The PBR maps are generated automatically from your seamless texture:
 
 - **Normal** — Surface detail and direction
 - **Roughness** — Surface smoothness
-- **Metallic** — Metal vs dielectric
 - **AO** — Ambient occlusion
-- **Height** — Surface elevation
 - **Displacement** — Tessellation displacement
 - **Opacity** — Transparency mask
-- **Emissive** — Self-illumination
 
 Adjust each map's controls, then select a channel in the dock at the bottom to preview it.
 
@@ -84,7 +81,7 @@ Press `Ctrl+Shift+E` to open the Production Export dialog:
 3. Set material name and output folder
 4. Click **Export**
 
-The exporter creates all map files plus renderer-specific sidecar scripts (MaxScript, Python, or UE5 material instance).
+The exporter creates the selected texture-map files using renderer naming and format conventions. It does not create material scripts or sidecar files.
 
 ---
 

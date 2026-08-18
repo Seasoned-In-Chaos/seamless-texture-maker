@@ -72,7 +72,7 @@ def calculate_blend_weights(half_blend, smoothness):
         t = offset / half_blend
 
         angle = t * np.pi
-        weight = 0.25 * (np.cos(angle) + 1.0)
+        weight = 0.5 * (np.cos(angle) + 1.0)
 
         weights[i] = weight
 
@@ -96,7 +96,7 @@ def blend_seams_fast(image: np.ndarray, blend_strength: float = 0.5,
     assert_float32(image, "blend_seams_fast image")
     h, w = image.shape[:2]
 
-    max_blend_width = min(h, w) // 4
+    max_blend_width = min(h, w) // 2
     blend_width = int(max_blend_width * blend_strength)
 
     if blend_width < 2:

@@ -10,7 +10,7 @@ description: Install SEAMS and launch it for the first time.
 | Requirement | Minimum | Recommended |
 |---|---|---|
 | **Operating System** | Windows 10 (64-bit) | Windows 11 |
-| **Python** | 3.12 | 3.12 |
+| **Python** | 3.11 | 3.12+ |
 | **RAM** | 8 GB | 16 GB+ |
 | **GPU** | Any (CPU fallback works) | NVIDIA with CUDA |
 | **OpenGL** | 2.1 compatibility | 4.5+ |
@@ -59,7 +59,7 @@ When you launch SEAMS for the first time:
 
 2. **Empty workspace** — The main window opens in Classic Mode with an empty 2D viewport. Double-click or drag-and-drop an image to get started.
 
-3. **Single instance** — SEAMS uses a Windows named mutex to prevent duplicate instances. If you try to launch a second copy, the existing window is brought to focus instead.
+3. **Single instance** — SEAMS uses a Windows named mutex to prevent duplicate instances. A second launch exits immediately while the first copy continues running.
 
 ## DPI & Display
 
@@ -101,7 +101,7 @@ build.bat
 ```
 
 This 8-step pipeline:
-1. Finds Python 3.12
+1. Finds the available Python interpreter (3.11 or newer)
 2. Creates/updates the build virtual environment
 3. Installs all dependencies
 4. Verifies MSVC toolchain

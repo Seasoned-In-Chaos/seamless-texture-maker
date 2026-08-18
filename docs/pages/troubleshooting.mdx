@@ -67,7 +67,7 @@ SEAMS works fine without CUDA. CPU mode + Numba JIT is perfectly usable for text
 **Fix**:
 - **For OpenGL renderers** (Blender, Corona): Ensure "Invert Y (DirectX)" is **unchecked**
 - **For DirectX renderers** (UE5, V-Ray): Ensure "Invert Y (DirectX)" is **checked**
-- If bumps appear as dents, enable "Invert Height" in the Normal & Bump section
+- If bumps appear as dents, enable "Invert Height" in the Normal Map section
 
 ---
 
@@ -96,14 +96,3 @@ SEAMS works fine without CUDA. CPU mode + Numba JIT is perfectly usable for text
 **Fix**: Subsequent launches use cached JIT functions from `%APPDATA%\SeamlessTextureMaker\numba_cache` and will be faster.
 
 ---
-
-## Auto-Update Doesn't Work
-
-**Symptoms**: No update notification appears, or update fails to apply.
-
-**Fix**:
-1. Check internet connectivity
-2. Verify the GitHub Releases API is accessible from your network
-3. Check if `SEAMS_new.exe` or `apply_update.bat` exist in the application directory — delete them if stale
-4. Try **Help → Check for Updates** manually
-5. The auto-updater requires the app to be run from an EXE (not `python main.py`)
