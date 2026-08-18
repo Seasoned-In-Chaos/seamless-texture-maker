@@ -55,20 +55,20 @@ def warmup_all_jit_functions() -> Dict[str, float]:
 
     # --- materialize_methods_jit (splat) ---
     try:
-        from .materialize_methods_jit import blend_patch_jit, synthesis_splat_jit
+        from .materialize_methods_jit import (
+            splat_accumulate_jit, splat_resolve_jit,
+        )
 
         t0 = time.perf_counter()
-        canvas = tiny_3ch.copy()
-        patch = tiny_3ch.copy()
-        mask = np.ones((64, 64, 1), dtype=np.float32)
-        blend_patch_jit(canvas, patch, mask, 0, 0, 64, 64)
-
-        patches = np.stack([patch])
-        masks = np.stack([mask])
+        patches = np.stack([tiny_3ch.copy()])
+        masks = np.ones((1, 64, 64), dtype=np.float32)
         coords = np.array([[0, 0]], dtype=np.int32)
         indices = np.array([0], dtype=np.int32)
-        canvas2 = tiny_3ch.copy()
-        synthesis_splat_jit(canvas2, patches, masks, coords, indices, 64, 64)
+
+        accum = np.zeros((64, 64, 3), dtype=np.float32)
+        weight = np.zeros((64, 64), dtype=np.float32)
+        splat_accumulate_jit(accum, weight, patches, masks, coords, indices)
+        splat_resolve_jit(accum, weight, tiny_3ch, np.empty_like(accum))
         elapsed = (time.perf_counter() - t0) * 1000.0
         timings["splat_jit"] = elapsed
         logger.info("warmup splat_jit: %.1f ms", elapsed)

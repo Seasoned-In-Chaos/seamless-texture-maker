@@ -252,13 +252,18 @@ class SeamlessProcessor:
         # KEY OPTIMIZATION: Cache rotated patches.
         # Only re-generate patches if appearance-affecting params change.
         # Coordinate layout is re-computed each call (fast, vectorized).
+        # Wobble and the seed shape the patch masks, so they belong in the
+        # key too -- otherwise a stale bank is reused and those sliders look
+        # dead until some other parameter changes.
         cache_key = (
             self._image_hash,
             img.shape,
-            round(self.splat_scale, 2),
+            round(self.splat_scale, 3),
             int(self.splat_rotation),
             round(self.splat_random_rotation, 3),
-            round(self.edge_falloff, 3)
+            round(self.splat_wobble, 3),
+            round(self.edge_falloff, 3),
+            int(self.splat_randomize),
         )
 
         cached_batches = self._splat_cache.get(cache_key)
@@ -271,7 +276,8 @@ class SeamlessProcessor:
             rand_rot=self.splat_random_rotation,
             wobble=self.splat_wobble,
             falloff=self.edge_falloff,
-            cached_batches=cached_batches
+            cached_batches=cached_batches,
+            seed=int(self.splat_randomize),
         )
 
         # Store in cache if newly generated

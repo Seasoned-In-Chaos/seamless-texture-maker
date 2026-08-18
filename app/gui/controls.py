@@ -348,7 +348,8 @@ class ControlPanel(PanelShell):
         self.method_combo.addItem("Splat Synthesis", "splat")
         self.method_combo.currentIndexChanged.connect(self._on_method_changed)
         method.body.addWidget(self.method_combo)
-        method.body.addWidget(ChipRow(["Stone", "Fabric", "Organic", "Hard Surface"], "Stone"))
+        self.preset_chips = ChipRow(["Stone", "Fabric", "Organic", "Hard Surface"], "Stone")
+        method.body.addWidget(self.preset_chips)
         self.layout.addWidget(method)
 
         self.overlap_card = PluginCard("Overlap Controls", "Precise seam replacement and edge feathering.")
@@ -362,18 +363,26 @@ class ControlPanel(PanelShell):
         self.layout.addWidget(self.overlap_card)
 
         self.splat_card = PluginCard("Splat Controls", "Patch-based material synthesis for irregular sources.")
-        self.sp_falloff_slider = LabeledSlider("Edge Falloff", 0, 100, 0, "%")
-        self.splat_scale = LabeledSlider("Splat Scale", 0, 5, 0)
+        self.sp_falloff_slider = LabeledSlider("Edge Falloff", 0, 100, 55, "%")
+        # Patch size as a percentage of the source. A 0% floor would mean
+        # zero-area patches, so the range starts where patches are usable.
+        self.splat_scale = LabeledSlider("Splat Scale", 10, 150, 45, "%")
         self.splat_rot = LabeledSlider("Splat Rotation", 0, 360, 0)
-        self.splat_rand_rot = LabeledSlider("Random Rotation", 0, 100, 0, "%")
-        self.splat_wobble = LabeledSlider("Splat Wobble", 0, 100, 0, "%")
-        for slider in [self.sp_falloff_slider, self.splat_scale, self.splat_rot, self.splat_rand_rot, self.splat_wobble]:
+        self.splat_rand_rot = LabeledSlider("Random Rotation", 0, 100, 100, "%")
+        self.splat_wobble = LabeledSlider("Splat Wobble", 0, 100, 45, "%")
+        self._splat_sliders = [
+            self.sp_falloff_slider, self.splat_scale, self.splat_rot,
+            self.splat_rand_rot, self.splat_wobble,
+        ]
+        for slider in self._splat_sliders:
             slider.valueChanged.connect(self._on_param_changed)
             slider.sliderMoved.connect(self._on_live_update)
             self.splat_card.body.addWidget(slider)
         self.layout.addWidget(self.splat_card)
         self.splat_card.hide()
         self.current_random_seed = 0
+
+        self.preset_chips.changed.connect(self._on_preset_changed)
 
         export = PluginCard("Export", "Production texture output.")
         row = QWidget()
@@ -402,6 +411,63 @@ class ControlPanel(PanelShell):
         self.export_btn = self.add_bottom_button("EXPORT TEXTURE", self.exportClicked.emit)
         self.export_btn.setEnabled(False)
 
+    # Material presets. Each row is a coherent look rather than a nudge of a
+    # single value: patch size, how much patches rotate, how irregular their
+    # outlines are, and how soft their edges blend all move together.
+    MATERIAL_PRESETS = {
+        "Stone": {
+            "overlap_x": 20, "overlap_y": 20, "ov_falloff": 40,
+            "sp_falloff": 55, "scale": 45, "rotation": 0,
+            "rand_rot": 100, "wobble": 45,
+        },
+        "Fabric": {
+            # Weave direction has to survive, so patches stay small and
+            # barely rotate; crisp edges keep the thread pattern readable.
+            "overlap_x": 12, "overlap_y": 12, "ov_falloff": 20,
+            "sp_falloff": 25, "scale": 28, "rotation": 0,
+            "rand_rot": 8, "wobble": 12,
+        },
+        "Organic": {
+            # Large, heavily deformed, very soft patches -- no straight
+            # edges anywhere, which is what reads as foliage/dirt/moss.
+            "overlap_x": 28, "overlap_y": 28, "ov_falloff": 75,
+            "sp_falloff": 85, "scale": 65, "rotation": 0,
+            "rand_rot": 100, "wobble": 85,
+        },
+        "Hard Surface": {
+            # Man-made: aligned patches, near-circular outlines and a tight
+            # edge, so panel lines and machined detail stay sharp.
+            "overlap_x": 18, "overlap_y": 18, "ov_falloff": 6,
+            "sp_falloff": 8, "scale": 55, "rotation": 0,
+            "rand_rot": 0, "wobble": 4,
+        },
+    }
+
+    def _on_preset_changed(self, name):
+        preset = self.MATERIAL_PRESETS.get(name)
+        if not preset:
+            return
+
+        assignments = (
+            (self.overlap_x_slider, preset["overlap_x"]),
+            (self.overlap_y_slider, preset["overlap_y"]),
+            (self.ov_falloff_slider, preset["ov_falloff"]),
+            (self.sp_falloff_slider, preset["sp_falloff"]),
+            (self.splat_scale, preset["scale"]),
+            (self.splat_rot, preset["rotation"]),
+            (self.splat_rand_rot, preset["rand_rot"]),
+            (self.splat_wobble, preset["wobble"]),
+        )
+
+        # Apply silently, then reprocess once -- otherwise each of the eight
+        # sliders would kick off its own render.
+        for slider, value in assignments:
+            slider.blockSignals(True)
+            slider.setValue(value)
+            slider.blockSignals(False)
+
+        self.parametersChanged.emit()
+
     def _on_method_changed(self, _index):
         is_splat = self.method_combo.currentData() == "splat"
         self.overlap_card.setVisible(not is_splat)
@@ -422,7 +488,7 @@ class ControlPanel(PanelShell):
             "overlap_x": self.overlap_x_slider.value() / 100.0,
             "overlap_y": self.overlap_y_slider.value() / 100.0,
             "edge_falloff": edge_falloff,
-            "splat_scale": self.splat_scale.value(),
+            "splat_scale": self.splat_scale.value() / 100.0,
             "splat_rotation": self.splat_rot.value(),
             "splat_random_rotation": self.splat_rand_rot.value() / 100.0,
             "splat_wobble": self.splat_wobble.value() / 100.0,
