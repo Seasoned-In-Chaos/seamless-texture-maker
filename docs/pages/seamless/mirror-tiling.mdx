@@ -1,0 +1,29 @@
+---
+title: Mirror Tiling
+description: Create a seamless 2×2 mirrored tile with exact reflected edges.
+---
+
+# Mirror Tiling
+
+Mirror Tiling creates a 2×2 grid from the source image:
+
+```text
+original       horizontal flip
+vertical flip  horizontal + vertical flip
+```
+
+Every adjacent edge is an exact reflection of its neighbor. The outer left and right borders match, as do the top and bottom borders, so the full result repeats without visible breaks.
+
+## Output size
+
+Because the method explicitly creates a 2×2 grid, the output is twice the input width and twice the input height. This preserves every source pixel while providing a complete reflected repeat unit. The export resolution controls can still resize the result for a target texture size.
+
+For memory safety, Mirror Tiling accepts source images up to 4096px on their longest side; the generated tile can therefore be up to 8192×8192.
+
+## When to use it
+
+Use Mirror Tiling when preserving source detail is more important than removing mirrored repetition. It is especially useful for stone, fabric, and other textures where exact edge continuity is required and the reflected pattern is acceptable.
+
+<Note>
+Mirror Tiling has no blend controls: the edge relationship is exact by construction, so additional feathering would only soften the source and could introduce breaks.
+</Note>

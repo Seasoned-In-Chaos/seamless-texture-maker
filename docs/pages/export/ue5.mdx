@@ -1,21 +1,21 @@
 ---
 title: Unreal Engine 5
-description: Export PBR textures optimized for UE5 with ORM packing and material instance generation.
+description: Export PBR textures optimized for UE5 with ORM packing.
 ---
 
 # Unreal Engine 5 Export
 
-SEAMS provides UE5-optimized export with ORM texture packing, DirectX normal format, and automatic material instance generation.
+SEAMS provides UE5-optimized export with ORM texture packing and DirectX normal format. It writes texture maps only.
 
 ## UE5 Default Settings
 
 | Setting | Value |
 |---|---|
-| Workflow | Metallic/Roughness |
+| Workflow | Roughness |
 | Normal Format | DirectX (Y-) |
 | Format | PNG |
 | Bit Depth | 8-bit |
-| Color Management | Renderer Preset |
+| Output | Texture maps only |
 
 ## UE5-Specific Options
 
@@ -23,13 +23,7 @@ All options default to **enabled**:
 
 | Option | Description |
 |---|---|
-| ORM Texture Packing | Packs AO (R) + Roughness (G) + Metallic (B) into a single texture |
-| Nanite displacement ready | Exports height/displacement with UE5 Nanite compatibility |
-| Virtual texture ready | Settings optimized for VT streaming |
-| Compression optimized | UE5-compatible compression settings |
-| Auto power-of-two validation | Warns if texture dimensions aren't power-of-two |
-| Generate UE5 material instance | Creates a text file with material instance parameters |
-| sRGB auto assignment | Correctly flags sRGB vs linear textures |
+| ORM Texture Packing | Packs AO (R) + Roughness (G) with a zeroed B channel into a single texture |
 
 ## ORM Packing
 
@@ -39,7 +33,7 @@ When ORM packing is enabled, three maps are combined into a single RGB texture:
 |---|---|---|
 | **R** | AO | Ambient Occlusion map |
 | **G** | Roughness | Roughness map |
-| **B** | Metallic | Metallic map |
+| **B** | Reserved | Always zero |
 
 This reduces texture memory from 3 separate textures to 1, which is the standard UE5 practice.
 
@@ -51,15 +45,7 @@ UE5 uses the `T_` prefix convention:
 T_MaterialName_D.png      — Diffuse/BaseColor
 T_MaterialName_N.png      — Normal Map
 T_MaterialName_ORM.png   — Packed ORM
-T_MaterialName_Height.png — Height/Displacement
-```
-
-## Material Instance
-
-When "Generate UE5 material instance" is enabled, a text file is created:
-
-```
-MaterialName_UE5_material_instance.txt
+T_MaterialName_Displacement.png — Displacement
 ```
 
 <Tip>

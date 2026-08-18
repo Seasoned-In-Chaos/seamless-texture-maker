@@ -4,7 +4,7 @@ from __future__ import annotations
 import cv2
 import numpy as np
 from PyQt6.QtCore import QPoint, QRect, QRectF, QSize, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QImage, QPainter, QPen, QPixmap
+from PyQt6.QtGui import QBrush, QColor, QImage, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
@@ -31,29 +31,25 @@ CHANNEL_ORDER = [
     "Base Color",
     "Normal",
     "Roughness",
-    "Metallic",
     "AO",
-    "Height",
+    "Displacement",
     "Opacity",
-    "Emissive",
 ]
 
 CHANNEL_LABELS = {
     "Base Color": "BaseColor",
     "Normal": "Normal",
     "Roughness": "Roughness",
-    "Metallic": "Metallic",
     "AO": "AO",
-    "Height": "Height",
+    "Displacement": "Displacement",
     "Opacity": "Opacity",
-    "Emissive": "Emissive",
 }
 
 
 def numpy_to_pixmap(img):
     if img is None:
         return None
-        
+
     # QPixmap is deeply tied to the display's bit depth (usually 8-bit per channel).
     # Sending QImage.Format_RGBA64 to QPixmap.fromImage() often fails on Windows, 
     # resulting in broken/flat images. We must downcast for 2D previews.
@@ -77,6 +73,33 @@ def numpy_to_pixmap(img):
     return QPixmap.fromImage(qimg.copy())
 
 
+_checkerboard_brush = None
+
+def _get_checkerboard_brush() -> QBrush:
+    global _checkerboard_brush
+    if _checkerboard_brush is not None:
+        return _checkerboard_brush
+
+    check_size = 14
+    pixmap = QPixmap(check_size * 2, check_size * 2)
+    pixmap.fill(QColor("#131620"))
+    painter = QPainter(pixmap)
+    painter.fillRect(0, 0, check_size, check_size, QColor("#1e222d"))
+    painter.fillRect(check_size, check_size, check_size, check_size, QColor("#1e222d"))
+    painter.end()
+
+    _checkerboard_brush = QBrush(pixmap)
+    return _checkerboard_brush
+
+
+def _draw_checkerboard(painter: QPainter, rect: QRect):
+    """Draw a dark transparency checkerboard pattern matching NVIDIA Texture Tools / Photoshop."""
+    painter.save()
+    painter.setClipRect(rect)
+    painter.fillRect(rect, _get_checkerboard_brush())
+    painter.restore()
+
+
 class TextureViewport(QWidget):
     zoomChanged = pyqtSignal(float)
     fileDropped = pyqtSignal(str)
@@ -85,13 +108,13 @@ class TextureViewport(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setAcceptDrops(True)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self._before = None
         self._after = None
-        self._mode = "split"
-        self._zoom = 1.0
-        self._show_guides = True
+        self._mode = "single"
         self._tiles = 2
-        self._split_ratio = 0.5
+        self._show_guides = True
+        self._zoom = 1.0
         self._pan = QPoint(0, 0)
         self._last_mouse = None
         self._dragging_pan = False
@@ -134,7 +157,6 @@ class TextureViewport(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         painter.fillRect(self.rect(), QColor("#07080c"))
         if not self._before and not self._after:
             painter.setPen(QColor("#737891"))
@@ -148,6 +170,10 @@ class TextureViewport(QWidget):
         content_rect = QRect()
 
         if self._mode == "side_by_side":
+            if self._zoom <= 1.0:
+                painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+            else:
+                painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
             content_rect = self._paint_side_by_side(painter)
         else:
             w, h = target.width(), target.height()
@@ -155,6 +181,14 @@ class TextureViewport(QWidget):
             tile_factor = self._tiles if self._mode == "tile" else 1
             scale = min(view_w / max(1, w * tile_factor), view_h / max(1, h * tile_factor)) * self._zoom
             scale = max(0.001, scale)
+
+            # Nearest-neighbor (pixelated) rendering when texels are magnified (scale >= 1.0 or zoom > 1.0),
+            # matching NVIDIA Texture Tools Exporter pixel inspection.
+            if scale >= 1.0 or self._zoom > 1.0:
+                painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, False)
+            else:
+                painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+
             tile_w, tile_h = int(w * scale), int(h * scale)
             sw, sh = tile_w * tile_factor, tile_h * tile_factor
             if sw <= 0 or sh <= 0:
@@ -163,6 +197,10 @@ class TextureViewport(QWidget):
             ox = (view_w - sw) // 2 + self._pan.x()
             oy = (view_h - sh) // 2 + self._pan.y()
             content_rect = QRect(ox, oy, sw, sh)
+
+            # Draw checkerboard pattern if transparent
+            if target.hasAlphaChannel():
+                _draw_checkerboard(painter, content_rect)
 
             if self._mode == "tile":
                 for row in range(self._tiles):
@@ -201,6 +239,8 @@ class TextureViewport(QWidget):
     def _paint_split(self, painter, target, rect, scale):
         before = self._before if self._before else target
         after = self._after if self._after else target
+        if (before and before.hasAlphaChannel()) or (after and after.hasAlphaChannel()):
+            _draw_checkerboard(painter, rect)
         painter.drawPixmap(rect, before)
         split_x = rect.left() + int(rect.width() * self._split_ratio)
         if after:
@@ -227,6 +267,9 @@ class TextureViewport(QWidget):
         )
         painter.save()
         painter.setClipRect(area)
+        if pixmap.hasAlphaChannel():
+            _draw_checkerboard(painter, rect)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, not (scale >= 1.0 or self._zoom > 1.0))
         painter.drawPixmap(rect, pixmap)
         painter.restore()
         return rect
@@ -509,7 +552,7 @@ class PBRViewportToolbar(QWidget):
         self.displacement.setValue(8)
         self.displacement.setFixedWidth(96)
         self.displacement.valueChanged.connect(viewport.set_displacement_strength)
-        layout.addWidget(self._labeled("Height", self.displacement))
+        layout.addWidget(self._labeled("Displacement", self.displacement))
 
         self.exposure = QSlider(Qt.Orientation.Horizontal)
         self.exposure.setRange(20, 220)
@@ -799,8 +842,6 @@ class ChannelDock(QWidget):
         return self._active
 
     def set_channel(self, name: str, pixmap: QPixmap | None):
-        if name == "Displacement":
-            name = "Height"
         card = self.cards.get(name)
         if card:
             card.set_pixmap(pixmap)
@@ -824,10 +865,18 @@ class StudioWorkspace(QWidget):
         self.splitter.addWidget(self.viewport2d)
         self.splitter.setStretchFactor(0, 3)
         self.splitter.setStretchFactor(1, 2)
-        self.splitter.setSizes([760, 430])
+        self.splitter.setSizes([600, 400])
         # Pass splitter directly so toolbar never needs to traverse parent chain
         self.toolbar = PBRViewportToolbar(self.viewport3d, splitter=self.splitter)
-        layout.addWidget(self.toolbar)
+        toolbar_scroll = QScrollArea()
+        toolbar_scroll.setObjectName("ViewportToolbarScroll")
+        toolbar_scroll.setWidgetResizable(False)
+        toolbar_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        toolbar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        toolbar_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        toolbar_scroll.setFixedHeight(self.toolbar.sizeHint().height() + 2)
+        toolbar_scroll.setWidget(self.toolbar)
+        layout.addWidget(toolbar_scroll)
         layout.addWidget(self.splitter, 1)
 
 
@@ -865,7 +914,7 @@ class ImageViewer(QWidget):
         self.workspace_splitter.addWidget(self.stack)
 
         self.bottom_widget = QWidget()
-        self.bottom_widget.setMinimumHeight(210)
+        self.bottom_widget.setMinimumHeight(160)
         self.bottom_widget.setMaximumHeight(320)
         self.bottom_widget.setObjectName("PreviewDock")
         bottom_layout = QHBoxLayout(self.bottom_widget)
@@ -896,7 +945,15 @@ class ImageViewer(QWidget):
         controls_layout.setSpacing(6)
         self.classic_toolbar = ViewportToolbar()
         self.map_selector = ChannelDock()
-        controls_layout.addWidget(self.classic_toolbar, 0)
+        classic_toolbar_scroll = QScrollArea()
+        classic_toolbar_scroll.setObjectName("ViewportToolbarScroll")
+        classic_toolbar_scroll.setWidgetResizable(False)
+        classic_toolbar_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        classic_toolbar_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        classic_toolbar_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        classic_toolbar_scroll.setFixedHeight(self.classic_toolbar.sizeHint().height() + 2)
+        classic_toolbar_scroll.setWidget(self.classic_toolbar)
+        controls_layout.addWidget(classic_toolbar_scroll, 0)
         controls_layout.addWidget(self.map_selector, 1)
         bottom_layout.addWidget(self.controls_panel, 1)
         self.workspace_splitter.addWidget(self.bottom_widget)
@@ -919,6 +976,12 @@ class ImageViewer(QWidget):
         self.classic_toolbar.zoomRequested.connect(self.classic.viewport.set_zoom)
         self.classic_toolbar.guidesChanged.connect(self.classic.viewport.set_show_guides)
         self.classic.viewport.zoomChanged.connect(self.classic_toolbar.set_zoom_text)
+
+    def resizeEvent(self, event):  # noqa: N802
+        super().resizeEvent(event)
+        compact_height = self.height() < 720
+        self.bottom_widget.setMinimumHeight(150 if compact_height else 210)
+        self.bottom_widget.setMaximumHeight(220 if compact_height else 320)
 
     def _toggle_mode(self):
         if self.stack.currentIndex() == 0:
@@ -981,8 +1044,6 @@ class ImageViewer(QWidget):
             self.studio.viewport2d.set_after_pixmap(pix)
 
     def set_map(self, name, img):
-        if name == "Displacement":
-            name = "Height"
         pix = numpy_to_pixmap(img)
         self.maps[name] = pix
         self.map_selector.set_channel(name, pix)

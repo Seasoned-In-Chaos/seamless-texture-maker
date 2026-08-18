@@ -17,7 +17,7 @@ pub fn edge_blend_symmetric(
     let weights: Vec<f32> = (1..=half)
         .map(|i| {
             let t = i as f32 / half as f32;
-            0.25 * (std::f32::consts::PI * t).cos()
+            0.5 * ((std::f32::consts::PI * t).cos() + 1.0)
         })
         .collect();
 

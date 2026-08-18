@@ -16,8 +16,7 @@ SEAMS operates entirely on your local machine. The application:
 - Does NOT collect personal information (name, email, location)
 - Does NOT track usage analytics or telemetry
 - Does NOT use cookies or tracking technologies
-- Does NOT communicate with external servers, except for:
-  - Checking for application updates (a single read-only request to the GitHub Releases API, which sends only your current version number in the User-Agent header)
+- Does NOT communicate with external servers
 
 ## Local Data Storage
 
@@ -35,14 +34,6 @@ All local data can be deleted at any time by removing the `%APPDATA%\SeamlessTex
 ## Third-Party Services
 
 SEAMS does not integrate with any third-party services, advertising networks, or analytics platforms.
-
-## Updates
-
-The application checks for updates by making a single request to:
-
-`https://api.github.com/repos/Seasoned-In-Chaos/seamless-texture-maker/releases/latest`
-
-This request includes only a User-Agent header with the app name and version. No personal data is sent. You can disable update checks by declining the update notification when prompted.
 
 ## Children's Privacy
 

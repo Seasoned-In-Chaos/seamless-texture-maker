@@ -106,7 +106,10 @@ def blend_seams(image: np.ndarray, blend_strength: float = 0.5,
     if fixed_width is not None:
         blend_width = int(fixed_width * 1.5)
     else:
-        max_blend_width = min(h, w) // 10
+        # A seam width of 25% of the smaller dimension gives the opposite
+        # wrapped pixels enough influence to remove the center discontinuity
+        # without washing out the whole tile.
+        max_blend_width = min(h, w) // 2
         blend_width = int(max_blend_width * blend_strength)
 
     if blend_width < 2:
@@ -165,7 +168,7 @@ def blend_seams(image: np.ndarray, blend_strength: float = 0.5,
     if half_blend > 0:
         offsets = np.arange(1, half_blend + 1)
         t = offsets / half_blend
-        weights = 0.25 * (np.cos(t * np.pi) + 1.0)
+        weights = 0.5 * (np.cos(t * np.pi) + 1.0)
 
         left_cols  = (cx - offsets) % w
         right_cols = (cx + offsets) % w
@@ -175,7 +178,10 @@ def blend_seams(image: np.ndarray, blend_strength: float = 0.5,
         else:
             w_col = weights[np.newaxis, :]
 
-        result[:, left_cols] = (1 - w_col) * img_f[:, left_cols] + w_col * img_f[:, right_cols]
+        left_values = img_f[:, left_cols].copy()
+        right_values = img_f[:, right_cols].copy()
+        result[:, left_cols] = (1 - w_col) * left_values + w_col * right_values
+        result[:, right_cols] = (1 - w_col) * right_values + w_col * left_values
 
         top_rows    = (cy - offsets) % h
         bottom_rows = (cy + offsets) % h
@@ -185,6 +191,9 @@ def blend_seams(image: np.ndarray, blend_strength: float = 0.5,
         else:
             w_row = weights[:, np.newaxis]
 
-        result[top_rows, :] = (1 - w_row) * img_f[top_rows, :] + w_row * img_f[bottom_rows, :]
+        top_values = result[top_rows, :].copy()
+        bottom_values = result[bottom_rows, :].copy()
+        result[top_rows, :] = (1 - w_row) * top_values + w_row * bottom_values
+        result[bottom_rows, :] = (1 - w_row) * bottom_values + w_row * top_values
 
     return result

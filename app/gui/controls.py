@@ -95,11 +95,13 @@ class LabeledSlider(QWidget):
     sliderReleased = pyqtSignal()
     sliderMoved = pyqtSignal(float)
 
-    def __init__(self, label, min_val=0, max_val=100, default=50, suffix="", parent=None):
+    def __init__(self, label, min_val=0, max_val=100, default=50, suffix="", parent=None,
+                 steps=100, decimals=None):
         super().__init__(parent)
         self.min_val = min_val
         self.max_val = max_val
         self.suffix = suffix
+        self.steps = max(1, int(steps))
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -114,7 +116,9 @@ class LabeledSlider(QWidget):
         self.spin.setMaximum(self.max_val)
         if self.suffix:
             self.spin.setSuffix(self.suffix)
-        self.spin.setDecimals(0 if isinstance(self.min_val, int) and isinstance(self.max_val, int) else 1)
+        if decimals is None:
+            decimals = 0 if isinstance(self.min_val, int) and isinstance(self.max_val, int) else 1
+        self.spin.setDecimals(decimals)
         self.spin.setButtonSymbols(QDoubleSpinBox.ButtonSymbols.NoButtons)
         self.spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.spin.setFixedWidth(50)
@@ -128,7 +132,7 @@ class LabeledSlider(QWidget):
 
         self.slider = QSlider(Qt.Orientation.Horizontal)
         self.slider.setMinimum(0)
-        self.slider.setMaximum(100)
+        self.slider.setMaximum(self.steps)
         self.slider.setValue(self._to_raw(default))
         self.slider.valueChanged.connect(self._on_slider_changed)
         self.slider.sliderPressed.connect(self.sliderPressed.emit)
@@ -139,10 +143,10 @@ class LabeledSlider(QWidget):
     def _to_raw(self, val):
         if self.max_val == self.min_val:
             return 0
-        return int((val - self.min_val) / (self.max_val - self.min_val) * 100)
+        return round((val - self.min_val) / (self.max_val - self.min_val) * self.steps)
 
     def _from_raw(self, value):
-        return self.min_val + (value / 100.0) * (self.max_val - self.min_val)
+        return self.min_val + (value / self.steps) * (self.max_val - self.min_val)
 
     def _on_slider_changed(self, value):
         mapped = self._from_raw(value)
@@ -346,15 +350,23 @@ class ControlPanel(PanelShell):
         self.method_combo = QComboBox()
         self.method_combo.addItem("Overlap Blend", "overlap")
         self.method_combo.addItem("Splat Synthesis", "splat")
+        self.method_combo.addItem("Offset + Cross-Fade (Standard)", "offset_crossfade")
+        self.method_combo.addItem("Mirror Tiling (2×2)", "mirror")
         self.method_combo.currentIndexChanged.connect(self._on_method_changed)
         method.body.addWidget(self.method_combo)
-        method.body.addWidget(ChipRow(["Stone", "Fabric", "Organic", "Hard Surface"], "Stone"))
+        self.method_hint = QLabel()
+        self.method_hint.setObjectName("InfoLabel")
+        self.method_hint.setWordWrap(True)
+        method.body.addWidget(self.method_hint)
+        self.material_preset = ChipRow(["Stone", "Fabric", "Organic", "Hard Surface"], "Stone")
+        self.material_preset.changed.connect(self._on_material_preset_changed)
+        method.body.addWidget(self.material_preset)
         self.layout.addWidget(method)
 
         self.overlap_card = PluginCard("Overlap Controls", "Precise seam replacement and edge feathering.")
-        self.overlap_x_slider = LabeledSlider("Overlap X", 0, 50, 0, "%")
-        self.overlap_y_slider = LabeledSlider("Overlap Y", 0, 50, 0, "%")
-        self.ov_falloff_slider = LabeledSlider("Edge Falloff", 0, 100, 0, "%")
+        self.overlap_x_slider = LabeledSlider("Overlap X", 0, 50, 20, "%")
+        self.overlap_y_slider = LabeledSlider("Overlap Y", 0, 50, 20, "%")
+        self.ov_falloff_slider = LabeledSlider("Edge Falloff", 0, 100, 10, "%")
         for slider in [self.overlap_x_slider, self.overlap_y_slider, self.ov_falloff_slider]:
             slider.valueChanged.connect(self._on_param_changed)
             slider.sliderMoved.connect(self._on_live_update)
@@ -362,17 +374,26 @@ class ControlPanel(PanelShell):
         self.layout.addWidget(self.overlap_card)
 
         self.splat_card = PluginCard("Splat Controls", "Patch-based material synthesis for irregular sources.")
-        self.sp_falloff_slider = LabeledSlider("Edge Falloff", 0, 100, 0, "%")
-        self.splat_scale = LabeledSlider("Splat Scale", 0, 5, 0)
+        self.sp_falloff_slider = LabeledSlider("Edge Falloff", 0, 100, 20, "%")
+        # A zero-sized patch is valid numerically but produces a mostly empty
+        # canvas.  Keep the control inside the useful range and match the
+        # processor's production default of one source-sized patch.
+        self.splat_scale = LabeledSlider("Splat Scale", 0.25, 3.0, 1.0)
         self.splat_rot = LabeledSlider("Splat Rotation", 0, 360, 0)
+        # Keep splats aligned by default.  Rotation remains available as an
+        # explicit opt-in and is independent from edge-falloff processing.
         self.splat_rand_rot = LabeledSlider("Random Rotation", 0, 100, 0, "%")
-        self.splat_wobble = LabeledSlider("Splat Wobble", 0, 100, 0, "%")
+        self.splat_wobble = LabeledSlider("Splat Wobble", 0, 100, 20, "%")
         for slider in [self.sp_falloff_slider, self.splat_scale, self.splat_rot, self.splat_rand_rot, self.splat_wobble]:
             slider.valueChanged.connect(self._on_param_changed)
             slider.sliderMoved.connect(self._on_live_update)
             self.splat_card.body.addWidget(slider)
+        self.sp_falloff_slider.valueChanged.connect(self._on_splat_falloff_changed)
+        self.splat_rot.setToolTip("Available when Edge Falloff is 0%.")
+        self.splat_rand_rot.setToolTip("Available when Edge Falloff is 0%.")
+        self._update_splat_transform_state()
         self.layout.addWidget(self.splat_card)
-        self.splat_card.hide()
+        self._on_method_changed(self.method_combo.currentIndex())
         self.current_random_seed = 0
 
         export = PluginCard("Export", "Production texture output.")
@@ -403,13 +424,83 @@ class ControlPanel(PanelShell):
         self.export_btn.setEnabled(False)
 
     def _on_method_changed(self, _index):
-        is_splat = self.method_combo.currentData() == "splat"
-        self.overlap_card.setVisible(not is_splat)
+        method = self.method_combo.currentData()
+        is_splat = method == "splat"
+        is_overlap = method == "overlap"
+        self.overlap_card.setVisible(is_overlap)
         self.splat_card.setVisible(is_splat)
+        hints = {
+            "offset_crossfade": "Shifts the source by 50% and linearly cross-fades the center seams.",
+            "mirror": "Builds a 2×2 reflected tile with exact matching outer edges.",
+            "overlap": "Blends overlapping strips for structured, controllable materials.",
+            "splat": "Synthesizes overlapping patches for irregular organic materials.",
+        }
+        self.method_hint.setText(hints.get(method, ""))
         self.parametersChanged.emit()
+        self.livePreviewRequested.emit()
+
+    def _on_material_preset_changed(self, preset):
+        """Apply a useful preset to both method families.
+
+        These chips used to be decorative.  Keeping the values in one place
+        makes them real controls while still allowing the user to fine-tune
+        every slider afterwards.
+        """
+        presets = {
+            "Stone": {
+                "overlap_x": 20, "overlap_y": 20, "overlap_falloff": 15,
+                "splat_falloff": 25, "scale": 1.0, "rotation": 0,
+                "random_rotation": 0, "wobble": 25,
+            },
+            "Fabric": {
+                "overlap_x": 12, "overlap_y": 12, "overlap_falloff": 8,
+                "splat_falloff": 12, "scale": 0.75, "rotation": 0,
+                "random_rotation": 0, "wobble": 10,
+            },
+            "Organic": {
+                "overlap_x": 25, "overlap_y": 25, "overlap_falloff": 30,
+                "splat_falloff": 35, "scale": 0.75, "rotation": 0,
+                "random_rotation": 0, "wobble": 35,
+            },
+            "Hard Surface": {
+                "overlap_x": 8, "overlap_y": 8, "overlap_falloff": 5,
+                "splat_falloff": 8, "scale": 1.25, "rotation": 0,
+                "random_rotation": 0, "wobble": 5,
+            },
+        }
+        values = presets.get(preset)
+        if values is None:
+            return
+
+        sliders = [
+            (self.overlap_x_slider, values["overlap_x"]),
+            (self.overlap_y_slider, values["overlap_y"]),
+            (self.ov_falloff_slider, values["overlap_falloff"]),
+            (self.sp_falloff_slider, values["splat_falloff"]),
+            (self.splat_scale, values["scale"]),
+            (self.splat_rot, values["rotation"]),
+            (self.splat_rand_rot, values["random_rotation"]),
+            (self.splat_wobble, values["wobble"]),
+        ]
+        for slider, value in sliders:
+            slider.blockSignals(True)
+            slider.setValue(value)
+            slider.blockSignals(False)
+        self._update_splat_transform_state()
+        self.parametersChanged.emit()
+        self.livePreviewRequested.emit()
 
     def _on_param_changed(self, *_args):
         self.parametersChanged.emit()
+
+    def _on_splat_falloff_changed(self, *_args):
+        self._update_splat_transform_state()
+
+    def _update_splat_transform_state(self):
+        """Rotation clips a feathered rectangular patch, so keep it off."""
+        transforms_allowed = self.sp_falloff_slider.value() <= 0.001
+        self.splat_rot.setEnabled(transforms_allowed)
+        self.splat_rand_rot.setEnabled(transforms_allowed)
 
     def _on_live_update(self, *_args):
         self.livePreviewRequested.emit()
@@ -431,9 +522,38 @@ class ControlPanel(PanelShell):
 
     def set_parameters(self, params):
         if "method" in params:
-            idx = self.method_combo.findData(params["method"])
+            method = str(params["method"]).strip().lower().replace("-", "_").replace(" ", "_")
+            method = {
+                "standard": "offset_crossfade",
+                "offset": "offset_crossfade",
+                "mirror_tiling": "mirror",
+                "mirror_tile": "mirror",
+            }.get(method, method)
+            idx = self.method_combo.findData(method)
             if idx >= 0:
                 self.method_combo.setCurrentIndex(idx)
+
+        # Restore all method controls, not only the dropdown.  Older settings
+        # may contain zero for Splat Scale; setValue clamps that to the safe
+        # minimum instead of allowing a blank/flat result.
+        if "overlap_x" in params:
+            self.overlap_x_slider.setValue(float(params["overlap_x"]) * 100.0)
+        if "overlap_y" in params:
+            self.overlap_y_slider.setValue(float(params["overlap_y"]) * 100.0)
+        if "edge_falloff" in params:
+            falloff = float(params["edge_falloff"]) * 100.0
+            self.ov_falloff_slider.setValue(falloff)
+            self.sp_falloff_slider.setValue(falloff)
+        if "splat_scale" in params:
+            self.splat_scale.setValue(float(params["splat_scale"]))
+        if "splat_rotation" in params:
+            self.splat_rot.setValue(float(params["splat_rotation"]))
+        if "splat_random_rotation" in params:
+            self.splat_rand_rot.setValue(float(params["splat_random_rotation"]) * 100.0)
+        if "splat_wobble" in params:
+            self.splat_wobble.setValue(float(params["splat_wobble"]) * 100.0)
+        if "splat_randomize" in params:
+            self.current_random_seed = int(params["splat_randomize"])
 
     def get_export_format(self):
         return self.format_combo.currentText().lower()

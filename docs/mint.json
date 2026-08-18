@@ -56,6 +56,8 @@
         {
           "group": "Seamless Processing",
           "pages": [
+            "pages/seamless/offset-crossfade",
+            "pages/seamless/mirror-tiling",
             "pages/seamless/overlap-blend",
             "pages/seamless/splat-synthesis"
           ]
@@ -81,7 +83,6 @@
       "pages": [
         "pages/keyboard-shortcuts",
         "pages/settings",
-        "pages/auto-update",
         "pages/troubleshooting",
         "pages/limitations"
       ]

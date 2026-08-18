@@ -138,7 +138,7 @@ if errorlevel 1 (
 )
 echo [OK] MSIX package created: dist\SEAMS.msix
 
-set "TEST_CERT_SUBJECT=CN=Shubham Panchasara, O=Seams Studio, C=US"
+set "TEST_CERT_SUBJECT=CN=Seams Studio, O=Seams Studio, C=US"
 for /f "tokens=*" %%t in ('powershell -NoProfile -Command "try { (Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.Subject -eq '%TEST_CERT_SUBJECT%' } | Select-Object -First 1).Thumbprint } catch { '' }"') do set "CERT_THUMB=%%t"
 
 if defined CERT_THUMB (

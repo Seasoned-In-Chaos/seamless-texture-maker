@@ -1,0 +1,25 @@
+---
+title: Offset + Cross-Fade
+description: Create a standard seamless tile with a 50% offset and linear center-seam feathering.
+---
+
+# Offset + Cross-Fade
+
+Offset + Cross-Fade is the standard deterministic blend. It shifts the image horizontally and vertically by 50%, bringing the original outer borders to the center axes. A local linear alpha feather then blends the pixels on both sides of each center seam before the offset is reversed.
+
+## When to use it
+
+Use this method when you want a quick, predictable seamless result that keeps the original output dimensions. It is a good starting point for photographs, architectural textures, and regular materials.
+
+## How it works
+
+1. Shift the image by `W/2` and `H/2` with wrapped edges.
+2. Pair pixels across the vertical and horizontal center seams.
+3. Blend each pair symmetrically with a linear weight: equal at the seam and zero at the feather boundary.
+4. Reverse the offset so the equalized seams become the outside borders.
+
+The result is the same size and has matching left/right and top/bottom borders for clean repeat tiling. The method does not use an inpainting pass, so it is fast and repeatable.
+
+<Note>
+The method has no extra controls because the 50% shift and linear feather are intentional fixed behavior. This keeps the result consistent and avoids controls that do not change the output.
+</Note>

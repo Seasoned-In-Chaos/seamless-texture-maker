@@ -1,11 +1,11 @@
 ---
 title: PBR Export Pipeline
-description: Full production export with renderer-specific presets and auto material generation.
+description: Full texture-map export with renderer-specific presets and workflow conversion.
 ---
 
 # PBR Export Pipeline
 
-Press `Ctrl+Shift+E` to open the Production Export dialog. This provides renderer-specific export with automatic material generation.
+Press `Ctrl+Shift+E` to open the Production Export dialog. This provides renderer-specific texture-map export with naming, format conversion, normal-channel conversion, glossiness conversion, and UE5 ORM packing.
 
 ## Renderer Presets
 
@@ -23,15 +23,11 @@ Selecting a renderer applies its default settings and shows renderer-specific op
 
 | Setting | Options | Default (varies by renderer) |
 |---|---|---|
-| Workflow | Metallic/Roughness, Specular/Glossiness | Per renderer |
+| Workflow | Roughness, Specular/Glossiness | Per renderer |
 | Texture Format | PNG, TIFF, EXR | Per renderer |
 | Normal Format | OpenGL (Y+), DirectX (Y-) | Per renderer |
-| Bit Depth | 8-bit, 16-bit, 32-bit | Per renderer |
+| Bit Depth | 8-bit, 16-bit, or 32-bit EXR | Per renderer |
 | Resolution | 1K (1024), 2K (2048), 4K (4096), 8K (8192) | 4K |
-| Compression | Balanced, Lossless, Render Farm Safe | Balanced |
-| Padding / Dilation | 0px, 8px, 16px, 32px | 0px |
-| Color Management | Renderer Preset, sRGB, Linear, ACES | Per renderer |
-| Texture Scale | 1.0, 0.5, 2.0, Real-world | 1.0 |
 
 <Note>
 The Resolution setting resizes the image. It does not supersample — selecting 8K for a 2K source will upscale. Select the resolution that matches or is lower than your source for best quality.
@@ -43,12 +39,10 @@ The Resolution setting resizes the image. It does not supersample — selecting 
 |---|---|---|---|
 | BaseColor | sRGB | On | — |
 | Roughness | Linear | On | Converted to Glossiness if workflow requires |
-| Metallic | Linear | On | — |
 | Normal | Linear | On | — |
 | AO | Linear | On | Packed into ORM for UE5 |
-| Height | Linear | On | — |
+| Displacement | Linear | On | — |
 | Opacity | Linear | Off | Off by default |
-| Emissive | sRGB | Off | Off by default |
 
 Each map card shows a thumbnail, name, colorspace/bit-depth, and packed/unpacked state.
 
@@ -79,28 +73,9 @@ Invalid filename characters in the material name are replaced with `_` and dupli
 
 `.png`, `.tiff`, `.tga`, `.exr` depending on format selection.
 
-## Material Sidecar Files
+## Material Setup
 
-A JSON sidecar is always written:
-
-```
-{MaterialName}_{Token}_material_preset.json
-```
-
-Containing: material name, engine, workflow, normal format, color management, texture scale, and all map file paths.
-
-### Renderer-Specific Sidecars
-
-| Renderer | Sidecar File | Content |
-|---|---|---|
-| Corona / V-Ray | `{name}_{token}_3dsmax.ms` | MaxScript with texture map paths |
-| Blender | `{name}_BLENDER_nodes.py` | Python script for node setup |
-| UE5 | `{name}_UE5_material_instance.txt` | UE5 material instance info |
-| Generic PBR | JSON only | Material preset JSON |
-
-<Warning>
-The auto-generated sidecar scripts currently contain placeholder comments and map paths. They do not include full material node setup logic. This is planned for a future update.
-</Warning>
+The exporter intentionally writes texture maps only. Create and wire the material in the target application so its color-space, compression, and shader settings match the project.
 
 ## Glossiness Conversion
 

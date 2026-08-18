@@ -3,7 +3,7 @@
 A powerful, GPU-accelerated desktop application for creating perfectly seamless textures and PBR materials for 3D workflows. Built with Python, PyQt6, OpenCV with CUDA support, and a Rust extension module.
 
 ![Version](https://img.shields.io/badge/version-3.0.0-blue)
-![Python](https://img.shields.io/badge/python-3.12-green)
+![Python](https://img.shields.io/badge/python-3.11%2B-green)
 ![License](https://img.shields.io/badge/license-MIT-orange)
 ![Platform](https://img.shields.io/badge/platform-Windows-blue)
 
@@ -11,13 +11,14 @@ A powerful, GPU-accelerated desktop application for creating perfectly seamless 
 
 ### Seamless Texture Generation & Delighting
 - **Delighting Algorithm** - Remove directional light and shadows from photos to create flat base colors.
-- **Standard Method** - Offset + Inpaint with edge blending.
+- **Offset + Cross-Fade** - 50% offset with linear center-seam feathering.
+- **Mirror Tiling** - Exact 2×2 reflection for zero-break edge repetition.
 - **Overlap Technique** - Tile overlap with smooth falloff.
 - **Splat Technique** - Texture bombing for organic patterns.
 - **Chunked Blending** - 2D fade at tile corners eliminates seam artifacts.
 
 ### PBR Material Studio
-- **Full PBR Map Generation** - Automatically derive Normal, Roughness, Metallic, AO, Height, and Displacement maps from a single image.
+- **PBR Map Generation** - Automatically derive Normal, Roughness, AO, Displacement, and Opacity maps from a single image.
 - **Material Lab Controls** - Tweak intensity, blur, and contrast for each PBR channel in real-time.
 
 ### 3D Viewport & Preview
@@ -27,15 +28,11 @@ A powerful, GPU-accelerated desktop application for creating perfectly seamless 
 - **Workspace Modes** - Toggle between "Classic Mode" (2D) and "Studio Mode" (split 2D/3D workspace).
 
 ### Performance & Export Pipelines
-- **Renderer-Specific Export** - One-click export for Unreal Engine 5 (ORM packing), Blender (Node setup), V-Ray, and Corona (MaxScript generation).
+- **Renderer-Specific Export** - One-click texture-map export for Unreal Engine 5 (ORM packing), Blender, V-Ray, Corona, and Generic PBR workflows.
 - **GPU Acceleration** - CUDA-optimized operations and Numba JIT compilation for heavy map generation.
 - **Rust Extension** - Critical path operations (edge blending, gradient computation, splat) in native Rust via PyO3.
 - **Multi-threaded Architecture** - Background processing keeps the UI fully responsive.
 - **Result Caching** - LRU cache with pipeline and PBR buckets avoids redundant recomputation.
-
-### Auto-Update & Security
-- **Built-in Auto-Updater** - Check for new versions, download, and apply updates on restart.
-- **SHA256 Verification** - All update downloads are integrity-checked before applying.
 
 ## Screenshots
 
@@ -46,7 +43,7 @@ A powerful, GPU-accelerated desktop application for creating perfectly seamless 
 ### System Requirements
 
 - Windows 10/11 (64-bit)
-- Python 3.12
+- Python 3.11 or newer
 - NVIDIA GPU with CUDA support (optional, falls back to CPU)
 - Rust toolchain (for building `seams_core` extension)
 
@@ -92,7 +89,7 @@ The build produces:
 
 1. **Load Image** - Drag & drop an image or use File > Open.
 2. **Delight** - (Optional) Use the Delight tab to remove uneven lighting.
-3. **Seamless** - Make the texture tileable using Standard, Overlap, or Splat modes.
+3. **Seamless** - Make the texture tileable using Offset + Cross-Fade, Mirror Tiling, Overlap, or Splat modes.
 4. **Material Lab** - Generate and tweak PBR maps (Normal, Roughness, AO, etc.).
 5. **Studio Mode** - Switch to Studio Mode to preview your material on a 3D mesh.
 6. **Export** - Use `Ctrl+Shift+E` to export the full PBR package for your target renderer.
@@ -145,7 +142,6 @@ seamless-texture-maker/
 │       ├── image_io.py          # Image read/write
 │       ├── app_logging.py       # Logging setup
 │       ├── perf.py              # Performance monitoring
-│       └── updater.py           # Auto-updater with SHA256 verification
 ├── seams_core/                  # Rust extension (PyO3)
 │   ├── src/
 │   │   ├── lib.rs               # Module entry point
@@ -247,7 +243,6 @@ LRU cache with separate buckets for pipeline and PBR results:
 - [x] Rust extension for critical paths
 
 ### Phase 2: Polish & Ship (In Progress)
-- [x] Auto-updater with SHA256 verification
 - [x] DPI-aware window sizing (1080p+)
 - [x] PyInstaller packaging with selective Qt6 imports
 - [x] Inno Setup installer

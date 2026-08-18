@@ -31,8 +31,10 @@ from PyQt6.QtOpenGL import (
     QOpenGLVersionProfile,
 )
 from PyQt6.QtOpenGLWidgets import QOpenGLWidget
+from PyQt6.sip import voidptr
 
 from ..utils.app_logging import get_logger, log_exception
+from ..core.texture_mipmaps import generate_mipmaps
 
 
 logger = get_logger(__name__)
@@ -72,22 +74,10 @@ CHANNELS = {
         "unit": 2,
         "colorspace": "Linear",
     },
-    "Metallic": {
-        "uniform": "u_metalnessMap",
-        "flag": "u_hasMetalnessMap",
-        "unit": 3,
-        "colorspace": "Linear",
-    },
     "AO": {
         "uniform": "u_aoMap",
         "flag": "u_hasAoMap",
         "unit": 4,
-        "colorspace": "Linear",
-    },
-    "Height": {
-        "uniform": "u_heightMap",
-        "flag": "u_hasHeightMap",
-        "unit": 5,
         "colorspace": "Linear",
     },
     "Displacement": {
@@ -101,12 +91,6 @@ CHANNELS = {
         "flag": "u_hasAlphaMap",
         "unit": 6,
         "colorspace": "Linear",
-    },
-    "Emissive": {
-        "uniform": "u_emissiveMap",
-        "flag": "u_hasEmissiveMap",
-        "unit": 7,
-        "colorspace": "sRGB",
     },
 }
 
@@ -165,6 +149,16 @@ def numpy_to_qimage(image: np.ndarray | None) -> QImage:
     bpl = w * c * (2 if is_16bit else 1)
     qimg = QImage(rgb.data, w, h, bpl, fmt)
     return qimg.copy()
+
+
+def _qimage_to_bgra(image: QImage) -> np.ndarray:
+    """Copy a QImage into the OpenCV channel order used by the generators."""
+    rgba = image.convertToFormat(QImage.Format.Format_RGBA8888)
+    bits = rgba.bits()
+    bits.setsize(rgba.sizeInBytes())
+    rows = np.frombuffer(bits, dtype=np.uint8).reshape(rgba.height(), rgba.bytesPerLine())
+    pixels = rows[:, : rgba.width() * 4].reshape(rgba.height(), rgba.width(), 4).copy()
+    return pixels[..., [2, 1, 0, 3]]
 
 
 def _normalize(v: QVector3D) -> QVector3D:
@@ -333,19 +327,15 @@ precision highp float;
 uniform sampler2D u_baseMap;
 uniform sampler2D u_normalMap;
 uniform sampler2D u_roughnessMap;
-uniform sampler2D u_metalnessMap;
 uniform sampler2D u_aoMap;
 uniform sampler2D u_alphaMap;
-uniform sampler2D u_emissiveMap;
 uniform sampler2D u_heightMap;
 
 uniform bool u_hasBaseMap;
 uniform bool u_hasNormalMap;
 uniform bool u_hasRoughnessMap;
-uniform bool u_hasMetalnessMap;
 uniform bool u_hasAoMap;
 uniform bool u_hasAlphaMap;
-uniform bool u_hasEmissiveMap;
 uniform bool u_hasHeightMap;
 uniform bool u_uvChecker;
 uniform bool u_triplanar;
@@ -447,38 +437,34 @@ void main() {
 
     float roughness = u_hasRoughnessMap ? texture2D(u_roughnessMap, v_uv).r : 0.48;
     roughness = clamp(roughness, 0.045, 1.0);
-    float metalness = u_hasMetalnessMap ? texture2D(u_metalnessMap, v_uv).r : 0.0;
     float ao = u_hasAoMap ? texture2D(u_aoMap, v_uv).r : 1.0;
     float alpha = u_hasAlphaMap ? texture2D(u_alphaMap, v_uv).r : 1.0;
-    vec3 emissive = u_hasEmissiveMap ? srgbToLinear(texture2D(u_emissiveMap, v_uv).rgb) : vec3(0.0);
     float height = u_hasHeightMap ? texture2D(u_heightMap, v_uv).r : 0.5;
 
     if (u_isolate == 1) { gl_FragColor = vec4(linearToSrgb(base), 1.0); return; }
     if (u_isolate == 2) { gl_FragColor = vec4(n * 0.5 + 0.5, 1.0); return; }
     if (u_isolate == 3) { gl_FragColor = vec4(vec3(roughness), 1.0); return; }
-    if (u_isolate == 4) { gl_FragColor = vec4(vec3(metalness), 1.0); return; }
-    if (u_isolate == 5) { gl_FragColor = vec4(vec3(ao), 1.0); return; }
-    if (u_isolate == 6) { gl_FragColor = vec4(vec3(height), 1.0); return; }
-    if (u_isolate == 7) { gl_FragColor = vec4(vec3(alpha), 1.0); return; }
-    if (u_isolate == 8) { gl_FragColor = vec4(linearToSrgb(emissive), 1.0); return; }
+    if (u_isolate == 4) { gl_FragColor = vec4(vec3(ao), 1.0); return; }
+    if (u_isolate == 5) { gl_FragColor = vec4(vec3(height), 1.0); return; }
+    if (u_isolate == 6) { gl_FragColor = vec4(vec3(alpha), 1.0); return; }
 
     float nDotL = saturate(dot(n, l));
     float nDotV = saturate(dot(n, v));
     float nDotH = saturate(dot(n, h));
     float hDotV = saturate(dot(h, v));
 
-    vec3 f0 = mix(vec3(0.04), base, metalness);
+    vec3 f0 = vec3(0.04);
     vec3 f = fresnelSchlick(hDotV, f0);
     float d = dGgx(nDotH, roughness);
     float g = gSmith(nDotV, nDotL, roughness);
     vec3 spec = (d * g * f) / max(4.0 * nDotV * nDotL, 0.0001);
-    vec3 kd = (1.0 - f) * (1.0 - metalness);
+    vec3 kd = (1.0 - f);
     vec3 direct = (kd * base / PI + spec) * u_lightColor * nDotL;
 
     float horizon = pow(1.0 - saturate(geomN.y * 0.5 + 0.5), 2.0);
     vec3 env = base * u_envColor * u_envIntensity * (0.22 + 0.34 * ao);
     vec3 rim = fresnelSchlick(nDotV, f0) * u_envColor * u_envIntensity * horizon * (1.0 - roughness * 0.65);
-    vec3 color = (direct + env + rim) * ao + emissive;
+    vec3 color = (direct + env + rim) * ao;
     color = neutralTonemap(color * u_exposure);
     gl_FragColor = vec4(linearToSrgb(color), alpha);
 }
@@ -504,7 +490,7 @@ class PBRViewport(QOpenGLWidget):
         self._mesh_name = "Sphere"
         self._mesh = build_mesh(self._mesh_name)
         self._textures: dict[str, TextureRecord] = {}
-        self._pending_images: dict[str, QImage] = {}
+        self._pending_images: dict[str, list[np.ndarray]] = {}
         self._enabled = {name: True for name in CHANNELS}
         self._tiling = (1.0, 1.0)
         self._isolate = 0
@@ -540,14 +526,16 @@ class PBRViewport(QOpenGLWidget):
         self._timer.start()
 
     def set_material_map(self, name: str, image: np.ndarray | QImage | None):
-        if name == "Displacement":
-            name = "Height"
         if name not in CHANNELS or image is None:
             return
-        qimg = image if isinstance(image, QImage) else numpy_to_qimage(image)
-        if qimg.isNull():
+        if isinstance(image, QImage):
+            if image.isNull():
+                return
+            image = _qimage_to_bgra(image)
+        mipmaps = generate_mipmaps(image, name)
+        if not mipmaps:
             return
-        self._pending_images[name] = qimg
+        self._pending_images[name] = mipmaps
         self.loadingChanged.emit(True)
         self.update()
 
@@ -557,7 +545,7 @@ class PBRViewport(QOpenGLWidget):
             self.update()
 
     def isolate_channel(self, name: str | None):
-        order = ["Base Color", "Normal", "Roughness", "Metallic", "AO", "Height", "Opacity", "Emissive"]
+        order = ["Base Color", "Normal", "Roughness", "AO", "Displacement", "Opacity"]
         self._isolate = 0 if not name else (order.index(name) + 1 if name in order else 0)
         self.update()
 
@@ -768,22 +756,31 @@ class PBRViewport(QOpenGLWidget):
     def _sync_pending_textures(self):
         if not self._pending_images:
             return
-        for name, image in list(self._pending_images.items()):
+        for name, payload in list(self._pending_images.items()):
             try:
                 old = self._textures.pop(name, None)
                 if old is not None:
                     old.texture.destroy()
-                qimg = image.convertToFormat(QImage.Format.Format_RGBA8888)
-                texture = QOpenGLTexture(qimg)
+                mipmaps = payload
+                base = mipmaps[0]
+                texture = QOpenGLTexture(QOpenGLTexture.Target.Target2D)
+                texture.setFormat(QOpenGLTexture.TextureFormat.RGBA8_UNorm)
+                texture.setSize(base.shape[1], base.shape[0])
+                texture.setMipLevels(len(mipmaps))
+                texture.allocateStorage(QOpenGLTexture.PixelFormat.RGBA, QOpenGLTexture.PixelType.UInt8)
+                for level, mip in enumerate(mipmaps):
+                    texture.setData(
+                        level,
+                        QOpenGLTexture.PixelFormat.RGBA,
+                        QOpenGLTexture.PixelType.UInt8,
+                        voidptr(mip.ctypes.data),
+                    )
+                bytes_estimate = sum(mip.nbytes for mip in mipmaps)
+                width, height = base.shape[1], base.shape[0]
                 texture.setWrapMode(QOpenGLTexture.WrapMode.Repeat)
                 texture.setMinificationFilter(QOpenGLTexture.Filter.LinearMipMapLinear)
                 texture.setMagnificationFilter(QOpenGLTexture.Filter.Linear)
-                try:
-                    texture.generateMipMaps()
-                except Exception as exc:
-                    logger.debug("Mipmap generation skipped for %s: %s", name, exc)
-                bytes_estimate = qimg.width() * qimg.height() * 4
-                self._textures[name] = TextureRecord(texture, qimg.width(), qimg.height(), bytes_estimate)
+                self._textures[name] = TextureRecord(texture, width, height, bytes_estimate)
                 self._pending_images.pop(name, None)
             except Exception as exc:
                 log_exception(logger, f"Failed to upload texture map {name}", exc)
@@ -837,16 +834,15 @@ class PBRViewport(QOpenGLWidget):
             return
         bound_units = set()
         for channel, meta in CHANNELS.items():
-            canonical = "Height" if channel == "Displacement" else channel
-            if canonical in bound_units:
+            if channel in bound_units:
                 continue
-            record = self._textures.get(canonical)
-            if record is None or not self._enabled.get(canonical, True):
+            record = self._textures.get(channel)
+            if record is None or not self._enabled.get(channel, True):
                 continue
             unit = int(meta["unit"])
             self._funcs.glActiveTexture(GL_TEXTURE0 + unit)
             record.texture.bind(unit)
-            bound_units.add(canonical)
+            bound_units.add(channel)
 
     def _lighting(self):
         presets = {

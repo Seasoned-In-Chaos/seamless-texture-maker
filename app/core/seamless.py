@@ -1,17 +1,10 @@
-"""
-Main seamless texture generation algorithm.
-Orchestrates offset mapping, edge blending, and inpainting.
-Optimized with JIT compilation and caching for real-time performance.
-"""
+"""Seamless texture generation algorithms and processing orchestration."""
 import numpy as np
 import cv2
-from .offset_mapping import offset_image, reverse_offset, create_cross_mask
-from .edge_blending import blend_seams, create_blend_mask
-from .edge_blending_jit import blend_seams_fast
+from .offset_mapping import offset_image, reverse_offset
 from .materialize_methods import synthesis_overlap, synthesis_splat
-from .inpainting import smart_seam_inpaint
 from .delighting import delight_image
-from .gpu_utils import GPUAccelerator, is_cuda_available
+from .gpu_utils import is_cuda_available
 from .cache import ResultCache, hash_image, make_pipeline_key
 from .exceptions import ProcessingError, ImageLoadError
 
@@ -33,13 +26,13 @@ class SeamlessProcessor:
         self._splat_cache = {} # Cache for rotated patches (huge speedup)
         self.use_jit = True  # Use JIT-compiled functions
         
-        # Default parameters
-        self.method = 'overlap'  # overlap, splat
+        # Default parameters.  The two deterministic methods deliberately do
+        # not expose extra controls: their behavior is fixed and repeatable.
+        self.method = 'overlap'  # overlap, splat, offset_crossfade, mirror
         
-        # Standard params
-        # Standard params
+        # Offset + cross-fade params
         self.blend_strength = 0.5
-        self.seam_smoothness = 1.0 # Fixed to 1.0 (Linear Feather)
+        self.seam_smoothness = 1.0
         self.detail_preservation = 0.75
         self.symmetric_blending = True
         
@@ -58,8 +51,24 @@ class SeamlessProcessor:
     
     def set_parameters(self, **kwargs):
         """Update processing parameters."""
+        if 'method' in kwargs:
+            method = str(kwargs['method']).strip().lower().replace('-', '_').replace(' ', '_')
+            method_aliases = {
+                'standard': 'offset_crossfade',
+                'offset': 'offset_crossfade',
+                'offset_blend': 'offset_crossfade',
+                'crossfade': 'offset_crossfade',
+                'offset_cross_fade': 'offset_crossfade',
+                'mirror_tiling': 'mirror',
+                'mirror_tile': 'mirror',
+                'mirror_tiles': 'mirror',
+            }
+            self.method = method_aliases.get(method, method)
+
         # Handle flattened params (direct set)
         for key, value in kwargs.items():
+            if key == 'method':
+                continue
             if hasattr(self, key):
                 setattr(self, key, value)
         
@@ -87,10 +96,13 @@ class SeamlessProcessor:
         if 'preprocessing' in kwargs:
             self.preprocessing_params = kwargs['preprocessing']
 
-        # Handle old saved 'standard' method: fall back to 'overlap'
-        if self.method == 'standard':
-            self.method = 'overlap'
-    
+        # Keep direct/API callers safe as well as the GUI.  A zero-sized
+        # splat is an empty patch and produces an apparent flat result.
+        self.splat_scale = max(0.25, float(self.splat_scale))
+        self.splat_random_rotation = float(np.clip(self.splat_random_rotation, 0.0, 1.0))
+        self.splat_wobble = float(np.clip(self.splat_wobble, 0.0, 1.0))
+        self.edge_falloff = float(np.clip(self.edge_falloff, 0.0, 1.0))
+
     def load_image(self, image):
         """
         Set the input image for processing.
@@ -169,7 +181,17 @@ class SeamlessProcessor:
         
         # Auto-select chunked path for large images
         h, w = self._original_image.shape[:2]
-        if chunked and not preview and max(h, w) > 2048:
+        if self.method == 'mirror' and max(h, w) > 4096:
+            raise ProcessingError(
+                "Mirror Tiling doubles both dimensions; use an input up to 4096px "
+                "or choose another seamless method."
+            )
+        # A mirror tile intentionally produces a 2x2 canvas, so splitting the
+        # source into independent chunks would destroy the exact reflection
+        # at its four outer edges.  The offset cross-fade also needs one
+        # global center seam.  Keep both methods on their full-image path.
+        if (chunked and not preview and max(h, w) > 2048
+                and self.method not in {'mirror', 'offset_crossfade'}):
             return self.run_pipeline_chunked(self._original_image, chunk_size=1024, overlap=64)
         
         # Check cache (both preview and full-res when use_cache is True)
@@ -203,6 +225,10 @@ class SeamlessProcessor:
         # Choose method
         if self.method == 'splat':
             result = self._process_splat(img)
+        elif self.method == 'offset_crossfade':
+            result = self._process_offset_crossfade(img)
+        elif self.method == 'mirror':
+            result = self._process_mirror_tiling(img)
         else:  # overlap (default)
             result = self._process_overlap(img)
         
@@ -220,6 +246,8 @@ class SeamlessProcessor:
         """Get current parameters for cache key."""
         params = {
             'method': self.method,
+            'blend_strength': round(self.blend_strength, 3),
+            'seam_smoothness': round(self.seam_smoothness, 3),
             'overlap_x': round(self.overlap_x, 3),
             'overlap_y': round(self.overlap_y, 3),
             'edge_falloff': round(self.edge_falloff, 3),
@@ -253,6 +281,7 @@ class SeamlessProcessor:
         # Only re-generate patches if appearance-affecting params change.
         # Coordinate layout is re-computed each call (fast, vectorized).
         cache_key = (
+            "sampled-splat-v2",
             self._image_hash,
             img.shape,
             round(self.splat_scale, 2),
@@ -289,149 +318,75 @@ class SeamlessProcessor:
         return result
 
     def _process_standard(self, img):
-        """Process using Standard Offset+Inpaint method."""
+        """Backward-compatible name for the offset cross-fade method."""
+        return self._process_offset_crossfade(img)
+
+    def _process_offset_crossfade(self, img):
+        """Create a tile with a 50% offset and linear center-seam fades.
+
+        The offset moves the source's four original borders to the center
+        axes.  At each center seam, matching pixels on either side are
+        blended into both sides with a linear alpha feather.  Reversing the
+        offset then places the equalized seam pixels on the outside borders,
+        making the result repeat cleanly without an inpainting pass.
+        """
         h, w = img.shape[:2]
-        
-        # Step 1: Offset the image to bring seams to center
         offset = offset_image(img, 0.5, 0.5)
-        
-        # Calculate blend width - LOCAL falloff only (max 10% of image)
-        # fixed_width is not used here, assuming blend_strength is the primary control
-        # Local falloff constraint: max 10% of image dimension
-        max_blend_width = min(h, w) // 10
-        blend_width = int(max_blend_width * self.blend_strength)
-        
-        # Seam width for inpainting (e.g., 30% of blend_width, or a fixed minimum)
-        # This ensures the inpainting region is smaller than the blend region
-        seam_width = max(1, int(blend_width * 0.3)) # 3% of image if blend_strength is 1.0
-        
-        # Step 3: Apply smart inpainting to remove seams
-        # Optimization: Simplified inpaint for preview
-        is_preview = (img.shape[0] < 512) # Heuristic for preview mode
-        
-        inpainted = smart_seam_inpaint(
-            offset,
-            seam_width=seam_width,
-            detail_preservation=self.detail_preservation if not is_preview else 0.0,
-            method='telea'
-        )
-        
-        
-        # Color matching removed - narrow local falloff should be sufficient
-        
-        # Step 4: Apply edge blending (Always Non-Symmetric for best quality)
-        # Non-Symmetric blending with automatic width calculation
-        blended = blend_seams(
-            inpainted,
-            blend_strength=self.blend_strength,
-            smoothness=self.seam_smoothness,
-            symmetric=False,
-            original_image=offset
-        )
-        
-        # Step 5: Reverse the offset to restore original positioning
+
+        # Use a local feather: large enough to hide hard source borders but
+        # bounded so the method does not wash out the whole texture.
+        strength = float(np.clip(self.blend_strength, 0.1, 1.0))
+        radius = max(1, int(round(min(h, w) * 0.16 * strength)))
+        blended = self._linear_crossfade_center_seams(offset, radius)
         result = reverse_offset(blended, 0.5, 0.5)
-        
-        # Step 6: Final color/contrast preservation
-        result = self._preserve_color_balance(result, self._original_image)
-        
+
+        self._processed_image = result.astype(img.dtype, copy=False)
+        return self._processed_image
+
+    @staticmethod
+    def _linear_crossfade_center_seams(image, radius):
+        """Feather both center seam axes using symmetric linear weights."""
+        result = image.astype(np.float32, copy=True)
+        h, w = image.shape[:2]
+        cx, cy = w // 2, h // 2
+        radius = max(1, int(radius))
+
+        # At the seam the two sides are averaged equally.  The influence
+        # decreases linearly to zero at the outer edge of the feather.
+        source = result.copy()
+        for distance in range(radius):
+            weight = 0.5 * (1.0 - (distance / radius))
+            left, right = cx - 1 - distance, cx + distance
+            if left >= 0 and right < w:
+                left_value = source[:, left].copy()
+                right_value = source[:, right].copy()
+                result[:, left] = left_value * (1.0 - weight) + right_value * weight
+                result[:, right] = right_value * (1.0 - weight) + left_value * weight
+
+        # Keep the horizontal seam work while processing the vertical seam.
+        # This makes the center crossing obey both equalized boundaries.
+        source = result.copy()
+        for distance in range(radius):
+            weight = 0.5 * (1.0 - (distance / radius))
+            top, bottom = cy - 1 - distance, cy + distance
+            if top >= 0 and bottom < h:
+                top_value = source[top, :].copy()
+                bottom_value = source[bottom, :].copy()
+                result[top, :] = top_value * (1.0 - weight) + bottom_value * weight
+                result[bottom, :] = bottom_value * (1.0 - weight) + top_value * weight
+
+        if np.issubdtype(image.dtype, np.integer):
+            upper = np.iinfo(image.dtype).max
+        else:
+            upper = 1.0 if np.nanmax(image) <= 1.0 else 255.0
+        return np.clip(result, 0, upper).astype(image.dtype, copy=False)
+
+    def _process_mirror_tiling(self, img):
+        """Build an exact 2x2 mirrored tile with seamless outer borders."""
+        horizontal = np.concatenate((img, np.flip(img, axis=1)), axis=1)
+        result = np.concatenate((horizontal, np.flip(horizontal, axis=0)), axis=0)
         self._processed_image = result
         return result
-    
-    def _preserve_color_balance(self, processed, original):
-        """
-        Ensure processed image maintains original color balance and contrast.
-        """
-        # Convert to float for processing
-        proc_f = processed.astype(np.float32)
-        orig_f = original.astype(np.float32)
-        
-        # Match mean and std for each channel
-        for c in range(proc_f.shape[2] if len(proc_f.shape) == 3 else 1):
-            if len(proc_f.shape) == 3:
-                chan_proc = proc_f[:, :, c]
-                chan_orig = orig_f[:, :, c]
-            else:
-                chan_proc = proc_f
-                chan_orig = orig_f
-            
-            # Calculate statistics
-            proc_mean = np.mean(chan_proc)
-            proc_std = np.std(chan_proc)
-            orig_mean = np.mean(chan_orig)
-            orig_std = np.std(chan_orig)
-            
-            # Normalize and rescale
-            if proc_std > 0:
-                normalized = (chan_proc - proc_mean) / proc_std
-                rescaled = normalized * orig_std + orig_mean
-                
-                if len(proc_f.shape) == 3:
-                    proc_f[:, :, c] = rescaled
-                else:
-                    proc_f = rescaled
-        
-        # Clip and convert back to original dtype
-        result = np.clip(proc_f, 0, 255).astype(original.dtype)
-        return result
-    
-    def _match_inpaint_colors(self, inpainted, original, seam_width):
-        """
-        Match the color/brightness of inpainted seam areas to the surrounding original texture.
-        This eliminates visible bands caused by inpainting color mismatch.
-        """
-        h, w = inpainted.shape[:2]
-        result = inpainted.copy().astype(np.float32)
-        orig = original.astype(np.float32)
-        
-        # Create mask for the inpainted cross-shaped region
-        mask = np.zeros((h, w), dtype=np.uint8)
-        cx, cy = w // 2, h // 2
-        
-        # Horizontal seam
-        y_start = max(0, cy - seam_width)
-        y_end = min(h, cy + seam_width)
-        mask[y_start:y_end, :] = 255
-        
-        # Vertical seam
-        x_start = max(0, cx - seam_width)
-        x_end = min(w, cx + seam_width)
-        mask[:, x_start:x_end] = 255
-        
-        # For each color channel, match histogram of inpainted area to original
-        if len(result.shape) == 3:
-            for c in range(result.shape[2]):
-                # Get pixels in seam area
-                seam_pixels = result[:, :, c][mask > 0]
-                orig_pixels = orig[:, :, c][mask == 0]  # Sample from NON-seam area
-                
-                if len(seam_pixels) > 0 and len(orig_pixels) > 100:
-                    # Calculate statistics
-                    seam_mean = np.mean(seam_pixels)
-                    seam_std = np.std(seam_pixels)
-                    orig_mean = np.mean(orig_pixels)
-                    orig_std = np.std(orig_pixels)
-                    
-                    # Color correct the seam area to match original
-                    if seam_std > 0:
-                        normalized = (result[:, :, c] - seam_mean) / seam_std
-                        result[:, :, c] = normalized * orig_std + orig_mean
-        else:
-            # Grayscale
-            seam_pixels = result[mask > 0]
-            orig_pixels = orig[mask == 0]
-            
-            if len(seam_pixels) > 0 and len(orig_pixels) > 100:
-                seam_mean = np.mean(seam_pixels)
-                seam_std = np.std(seam_pixels)
-                orig_mean = np.mean(orig_pixels)
-                orig_std = np.std(orig_pixels)
-                
-                if seam_std > 0:
-                    normalized = (result - seam_mean) / seam_std
-                    result = normalized * orig_std + orig_mean
-        
-        return np.clip(result, 0, 255).astype(inpainted.dtype)
     
     def get_preview(self, max_size=1024):
         """

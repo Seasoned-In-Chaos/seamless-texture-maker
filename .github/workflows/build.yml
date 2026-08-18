@@ -50,6 +50,13 @@ jobs:
           pip install --quiet -r requirements.txt
           pip install --quiet maturin pyinstaller packaging
 
+      - name: Run automated tests
+        shell: cmd
+        run: |
+          call .venv-build\Scripts\activate.bat
+          pip install --quiet pytest
+          python -m pytest -q
+
       - name: Build Rust extension
         shell: cmd
         run: |

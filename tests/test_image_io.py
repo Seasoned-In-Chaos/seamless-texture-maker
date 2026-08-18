@@ -48,3 +48,12 @@ class TestImageIO:
         path = str(unicode_dir / "test.png")
         save_image(img_u8, path)
         assert os.path.exists(path)
+
+    def test_16bit_png_roundtrip_preserves_precision(self, tmp_path):
+        img_u16 = np.array([[[0, 32768, 65535]]], dtype=np.uint16)
+        path = str(tmp_path / "normal16.png")
+        save_image(img_u16, path)
+        reloaded, metadata = load_image(path)
+        assert reloaded.dtype == np.uint16
+        np.testing.assert_array_equal(reloaded, img_u16)
+        assert metadata.bit_depth == 16

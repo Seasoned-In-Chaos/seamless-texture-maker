@@ -24,7 +24,7 @@ spec_dir = Path(SPECPATH)
 
 EXCLUDE_PATTERNS = [
     'tests', 'testing', 'cuda', 'test_', 'doc_examples',
-    'pycc_distutils', 'gdb', 'benchmarks', 'rocksdb',
+    'pycc', 'gdb', 'benchmarks', 'rocksdb', 'tbbpool',
 ]
 
 def filtered_submodules(pkg):
@@ -101,6 +101,8 @@ a = Analysis(
         'numba.tests', 'numba.testing',
         'numba.np.ufunc.parallel',
         'numba.pycc',
+        'numba.np.ufunc.tbbpool',
+        'numba.np.ufunc._tbbpool',
         'llvmlite.tests',
         'llvmlite.binding.ffi',
         'llvmlite.ir.values',

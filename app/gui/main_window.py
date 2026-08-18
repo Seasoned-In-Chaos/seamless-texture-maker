@@ -1,7 +1,6 @@
 """Main window for SEAMS - Seamless Texture Studio."""
 import collections
 import os
-import sys
 import time
 
 import cv2
@@ -47,12 +46,6 @@ from ..utils.image_io import (
 
 
 logger = get_logger(__name__)
-
-
-def _current_exe_path() -> str:
-    if getattr(sys, "frozen", False):
-        return sys.executable
-    return ""
 
 
 class ProcessingThread(QThread):
@@ -208,11 +201,21 @@ class ImageLoadThread(QThread):
     def run(self):
         try:
             image, metadata = load_image(self.path)
-            # The processing pipeline operates entirely in float32 [0, 255].
-            # load_image returns the raw OpenCV array (uint8 for most formats),
-            # so convert here at the boundary.
-            if image.dtype != np.float32:
+            # The processing pipeline operates on BGR float32 values in
+            # [0, 255]. Normalize every supported input at this boundary so
+            # grayscale, 16-bit PNG/TIFF and float EXR files behave exactly
+            # like ordinary 8-bit images.
+            if image.ndim == 2:
+                image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+            elif image.ndim == 3 and image.shape[2] == 1:
+                image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+            if image.dtype == np.uint16:
+                image = image.astype(np.float32) / 257.0
+            elif image.dtype != np.float32:
                 image = image.astype(np.float32)
+            if image.size and float(np.nanmax(image)) <= 1.0:
+                image *= 255.0
+            image = np.nan_to_num(image, nan=0.0, posinf=255.0, neginf=0.0).clip(0.0, 255.0)
             info = get_file_info(self.path)
             self.loaded.emit(self.path, image, metadata, info, self.generation)
         except Exception as exc:
@@ -265,20 +268,20 @@ def export_pbr_package(base_img, gen_params, data, metadata=None):
         export_base = base_img
 
     generated_maps = NormalGenerator.process(export_base, **gen_params)
+    normal = generated_maps["Normal"]
+    if _normal_format_is_directx(gen_params.get("normal_format")) != _normal_format_is_directx(data.get("normal_format")):
+        normal = convert_normal_format(normal)
+
     maps = {
         "BaseColor": export_base,
-        "Normal": generated_maps["Normal"],
+        "Normal": normal,
         "Roughness": generated_maps["Roughness"],
-        "Metallic": generated_maps["Metallic"],
         "AO": generated_maps["AO"],
-        "Height": generated_maps["Height"],
+        "Displacement": generated_maps["Displacement"],
         "Opacity": generated_maps["Opacity"],
-        "Emissive": generated_maps["Emissive"],
     }
-    maps["Displacement"] = generated_maps.get("Displacement", maps["Height"])
 
     written = write_renderer_maps(export_dir, maps, data, metadata)
-    write_material_sidecars(export_dir, written, data)
     return written
 
 
@@ -292,6 +295,7 @@ def write_renderer_maps(export_dir, maps, data, metadata=None):
     def save_map(channel, image, suffix=None):
         if not selected.get(channel, False):
             return
+        image = prepare_export_image(image, data, channel)
         out_suffix = suffix or renderer_channel_suffix(channel, data)
         path = os.path.join(export_dir, f"{material}_{token}_{out_suffix}{ext}")
         save_image(image, path, metadata=metadata)
@@ -300,27 +304,25 @@ def write_renderer_maps(export_dir, maps, data, metadata=None):
     if data.get("renderer_key") == "ue5":
         if selected.get("BaseColor", False):
             path = os.path.join(export_dir, f"T_{material}_D{ext}")
-            save_image(maps["BaseColor"], path, metadata=metadata)
+            save_image(prepare_export_image(maps["BaseColor"], data, "BaseColor"), path, metadata=metadata)
             written["BaseColor"] = path
         if selected.get("Normal", False):
             path = os.path.join(export_dir, f"T_{material}_N{ext}")
-            save_image(maps["Normal"], path, metadata=metadata)
+            save_image(prepare_export_image(maps["Normal"], data, "Normal"), path, metadata=metadata)
             written["Normal"] = path
         if data.get("packing", False):
             ao = gray_image(maps["AO"])
             roughness = gray_image(maps["Roughness"])
-            metallic = gray_image(maps["Metallic"])
-            orm = cv2.merge([metallic, roughness, ao])
+            reserved = np.zeros_like(roughness)
+            orm = cv2.merge([reserved, roughness, ao])
             path = os.path.join(export_dir, f"T_{material}_ORM{ext}")
-            save_image(orm, path, metadata=metadata)
+            save_image(prepare_export_image(orm, data, "ORM"), path, metadata=metadata)
             written["ORM"] = path
         else:
             save_map("AO", maps["AO"])
             save_map("Roughness", maps["Roughness"])
-            save_map("Metallic", maps["Metallic"])
-        save_map("Height", maps["Height"], "H")
+        save_map("Displacement", maps["Displacement"], "Displacement")
         save_map("Opacity", maps["Opacity"], "Opacity")
-        save_map("Emissive", maps["Emissive"], "Emissive")
         return written
 
     save_map("BaseColor", maps["BaseColor"])
@@ -330,61 +332,60 @@ def write_renderer_maps(export_dir, maps, data, metadata=None):
         save_map("Roughness", glossiness, "Glossiness")
     else:
         save_map("Roughness", maps["Roughness"])
-    save_map("Metallic", maps["Metallic"])
     save_map("AO", maps["AO"])
-    save_map("Height", maps["Height"])
+    save_map("Displacement", maps["Displacement"])
     save_map("Opacity", maps["Opacity"])
-    save_map("Emissive", maps["Emissive"])
-    if selected.get("Height", False) or selected.get("Displacement", False):
-        displacement = clamp_displacement(maps["Displacement"], data)
-        path = os.path.join(export_dir, f"{material}_{token}_Displacement{ext}")
-        save_image(displacement, path, metadata=metadata)
-        written["Displacement"] = path
     return written
 
 
-def write_material_sidecars(export_dir, written, data):
-    material_options = data.get("material_options", {})
-    if not any(material_options.values()) and not any(data.get("options", {}).values()):
-        return
+def _normal_format_is_directx(value):
+    return "direct" in str(value or "").lower()
 
-    material = data.get("name", "Material")
-    engine = data.get("engine", "Generic PBR")
-    token = data.get("renderer_token", "PBR")
-    payload = {
-        "material": material,
-        "engine": engine,
-        "workflow": data.get("workflow"),
-        "normal_format": data.get("normal_format"),
-        "color_management": data.get("colorspace"),
-        "texture_scale": data.get("texture_scale"),
-        "maps": written,
-    }
-    path = os.path.join(export_dir, f"{material}_{token}_material_preset.json")
-    with open(path, "w", encoding="utf-8") as handle:
-        import json
-        json.dump(payload, handle, indent=2)
 
-    if data.get("renderer_key") in ("corona", "vray"):
-        script = os.path.join(export_dir, f"{material}_{token}_3dsmax.ms")
-        with open(script, "w", encoding="utf-8") as handle:
-            handle.write(f"-- {engine} material preset generated by SEAMS\n")
-            handle.write(f"-- Material: {material}\n")
-            for channel, filepath in written.items():
-                handle.write(f"-- {channel}: {filepath}\n")
-    elif data.get("renderer_key") == "blender":
-        script = os.path.join(export_dir, f"{material}_BLENDER_nodes.py")
-        with open(script, "w", encoding="utf-8") as handle:
-            handle.write("# Blender Principled BSDF setup generated by SEAMS\n")
-            handle.write(f"material_name = {material!r}\n")
-            handle.write(f"texture_maps = {written!r}\n")
-    elif data.get("renderer_key") == "ue5":
-        script = os.path.join(export_dir, f"{material}_UE5_material_instance.txt")
-        with open(script, "w", encoding="utf-8") as handle:
-            handle.write("UE5 material instance setup generated by SEAMS\n")
-            handle.write("ORM packing: R=AO, G=Roughness, B=Metallic\n")
-            for channel, filepath in written.items():
-                handle.write(f"{channel}: {filepath}\n")
+def convert_normal_format(image):
+    """Flip the green channel when converting OpenGL Y+ to DirectX Y-."""
+    converted = image.copy()
+    max_value = 65535 if converted.dtype == np.uint16 else 255
+    if converted.ndim == 3 and converted.shape[2] >= 2:
+        converted[..., 1] = max_value - converted[..., 1]
+    return converted
+
+
+def prepare_export_image(image, data, channel):
+    """Apply the selected export bit depth and real renderer conversions."""
+    if channel == "Displacement":
+        image = clamp_displacement(image, data)
+
+    output_format = str(data.get("format", "png")).lower()
+    if output_format == "exr":
+        if image.dtype == np.uint16:
+            return image.astype(np.float32) / 65535.0
+        if image.dtype == np.uint8:
+            return image.astype(np.float32) / 255.0
+        values = np.nan_to_num(image.astype(np.float32), nan=0.0, posinf=255.0, neginf=0.0)
+        if values.size and float(np.nanmax(values)) > 1.0:
+            values /= 255.0
+        return np.clip(values, 0.0, 1.0)
+
+    bit_depth = str(data.get("bit_depth", "8-bit")).lower()
+    if "16" in bit_depth:
+        if image.dtype == np.uint16:
+            return image
+        values = image.astype(np.float32)
+        if values.size and float(np.nanmax(values)) <= 1.0:
+            values *= 65535.0
+        else:
+            values *= 257.0
+        return np.clip(values, 0, 65535).astype(np.uint16)
+
+    if image.dtype == np.uint16:
+        return (image / 257.0).astype(np.uint8)
+    if np.issubdtype(image.dtype, np.floating):
+        values = np.nan_to_num(image, nan=0.0, posinf=255.0, neginf=0.0)
+        if values.size and float(np.nanmax(values)) <= 1.0:
+            values *= 255.0
+        return np.clip(values, 0, 255).astype(np.uint8)
+    return image.astype(np.uint8, copy=False)
 
 
 def renderer_channel_suffix(channel, data):
@@ -393,12 +394,10 @@ def renderer_channel_suffix(channel, data):
     return {
         "BaseColor": "BaseColor",
         "Roughness": "Roughness",
-        "Metallic": "Metallic",
         "Normal": "Normal",
         "AO": "AO",
-        "Height": "Height",
+        "Displacement": "Displacement",
         "Opacity": "Opacity",
-        "Emissive": "Emissive",
     }.get(channel, channel)
 
 
@@ -451,13 +450,6 @@ class TopBar(QWidget):
         layout.addLayout(project)
         layout.addStretch()
 
-        for text, tip in [("Undo", "Ctrl+Z"), ("Redo", "Ctrl+Y"), ("Hand", "Pan workspace"), ("Frame", "Fit texture")]:
-            b = QPushButton(text)
-            b.setObjectName("ToolButton")
-            b.setToolTip(tip)
-            b.setFixedHeight(34)
-            layout.addWidget(b)
-
         self.status = QLabel("READY")
         self.status.setObjectName("StatusPill")
         layout.addWidget(self.status)
@@ -509,6 +501,13 @@ class NavItem(QWidget):
         layout.addWidget(self.shortcut)
         self._refresh()
 
+    def set_compact(self, compact):
+        """Collapse text labels when the window cannot spare rail width."""
+        self.label.setVisible(not compact)
+        self.shortcut.setVisible(not compact)
+        self.layout().setContentsMargins(8 if compact else 14, 0, 8 if compact else 12, 0)
+        self.layout().setSpacing(0 if compact else 10)
+
     def set_active(self, active):
         self._active = active
         self.setProperty("active", active)
@@ -533,8 +532,11 @@ class ToolRail(QWidget):
         super().__init__(parent)
         self._expanded = True
         self._items = {}
+        self._section_labels = []
+        self._info_card = None
         self.setObjectName("ToolRail")
-        self.setFixedWidth(236)
+        self.setMinimumWidth(64)
+        self.setMaximumWidth(236)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -561,6 +563,7 @@ class ToolRail(QWidget):
         ]:
             label = QLabel(section)
             label.setObjectName("NavSection")
+            self._section_labels.append(label)
             layout.addWidget(label)
             for key, icon, text, shortcut in entries:
                 item = NavItem(key, icon, text, shortcut)
@@ -571,6 +574,7 @@ class ToolRail(QWidget):
         layout.addStretch()
 
         info_card = QFrame()
+        self._info_card = info_card
         info_card.setObjectName("RailCard")
         il = QVBoxLayout(info_card)
         il.setContentsMargins(16, 14, 16, 14)
@@ -617,6 +621,16 @@ class ToolRail(QWidget):
         il.addLayout(size_row)
         
         layout.addWidget(info_card)
+
+    def set_compact(self, compact):
+        self._expanded = not compact
+        self.setFixedWidth(68 if compact else 236)
+        for label in self._section_labels:
+            label.setVisible(not compact)
+        for item in self._items.values():
+            item.set_compact(compact)
+        if self._info_card is not None:
+            self._info_card.setVisible(not compact)
 
     def _on_clicked(self, key):
         if key == "import":
@@ -946,9 +960,14 @@ class MainWindow(QMainWindow):
         self._connect_signals()
         self.control_panel.set_parameters(self.settings)
         self.setWindowTitle("SEAMS - Seamless Texture Studio")
+        # Propagate the application-level QIcon to this window so the title bar
+        # and Alt+Tab thumbnail show the correct icon.  The Windows taskbar
+        # button is handled separately in main.py via WM_SETICON after show().
+        _app_icon = QApplication.instance().windowIcon()
+        if not _app_icon.isNull():
+            self.setWindowIcon(_app_icon)
         self._restore_window_geometry()
         QApplication.instance().focusWindowChanged.connect(self._on_focus_window_changed)
-        self._start_update_check()
 
     def _setup_ui(self):
         self.setStyleSheet(get_dark_theme())
@@ -964,8 +983,6 @@ class MainWindow(QMainWindow):
         self.rail.navChanged.connect(self._on_nav_changed)
         self.rail.openClicked.connect(self._open_file)
         self.rail.exportClicked.connect(self._pbr_export_system)
-
-        self._update_banner = None
 
         root.addWidget(self.rail)
 
@@ -986,7 +1003,9 @@ class MainWindow(QMainWindow):
 
         right = QWidget()
         right.setObjectName("RightInspector")
-        right.setFixedWidth(372)
+        self.inspector = right
+        right.setMinimumWidth(220)
+        right.setMaximumWidth(372)
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(0)
@@ -1038,8 +1057,6 @@ class MainWindow(QMainWindow):
 
         help_menu = mb.addMenu("&Help")
         self._add_menu_action(help_menu, "&Keyboard Shortcuts", "F1", self._show_shortcuts)
-        self._add_menu_action(help_menu, "Check for &Updates", "", self._start_update_check)
-
         about_menu = mb.addMenu("&About")
         self._add_menu_action(about_menu, "About &SEAMS", "", self._show_about)
 
@@ -1391,6 +1408,13 @@ class MainWindow(QMainWindow):
         self.fullres_timer.setInterval(400)
         self.fullres_timer.timeout.connect(self._process_texture)
 
+        # Coalesce rapid Material Lab slider changes into one full-resolution
+        # generation after the user pauses briefly.
+        self.material_update_timer = QTimer(self)
+        self.material_update_timer.setSingleShot(True)
+        self.material_update_timer.setInterval(90)
+        self.material_update_timer.timeout.connect(self._request_material_maps)
+
     def statusBar(self):
         class _FakeSB:
             def __init__(self_, lbl):
@@ -1570,7 +1594,11 @@ class MainWindow(QMainWindow):
         params = self.control_panel.get_parameters()
         params["preprocessing"] = self.pre_panel.get_parameters()
         try:
-            processor = self.processor
+            # Preview processing must not mutate the full-resolution processor
+            # that the worker thread uses for export and final processing.
+            # Sharing it caused races and occasional stale full-size results
+            # when sliders were moved rapidly.
+            processor = SeamlessProcessor()
             processor.load_image(small)
             result = processor.process(preview=True, params=params)
             if result is not None:
@@ -1580,8 +1608,6 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             import logging
             logging.getLogger("seams.preview").debug("stage preview failed at scale %.3f: %s", scale, exc)
-        # Reload original-resolution image for subsequent full-res processing
-        self.processor.load_image(self.image_np)
 
     def _request_live_preview(self):
         params = self.control_panel.get_parameters()
@@ -1686,6 +1712,11 @@ class MainWindow(QMainWindow):
     def _on_normal_live_update(self):
         if self.image_np is None:
             return
+        self.material_update_timer.start()
+
+    def _request_material_maps(self):
+        if self.image_np is None:
+            return
         params = self.normal_panel.get_parameters()
         base = self.processor.processed_image if self.processor.processed_image is not None else self.image_np
         self._material_generation += 1
@@ -1696,8 +1727,7 @@ class MainWindow(QMainWindow):
             return
         self.processed_normal_map = pbr_maps.get("Normal")
         for name, img in pbr_maps.items():
-            if name != "Displacement":
-                self.material_maps[name] = img.copy()
+            self.material_maps[name] = img.copy()
             self.image_viewer.set_map(name, img)
 
     def _on_material_maps_error(self, msg, generation):
@@ -1778,7 +1808,7 @@ class MainWindow(QMainWindow):
                 "BaseColor": numpy_to_pixmap(thumb_img),
                 "Base Color": numpy_to_pixmap(thumb_img),
             }
-            needed = ["Normal", "Roughness", "Metallic", "AO", "Height", "Opacity", "Emissive"]
+            needed = ["Normal", "Roughness", "AO", "Displacement", "Opacity"]
             missing = [name for name in needed if cached.get(name) is None]
             if missing:
                 preview_maps = NormalGenerator.process(thumb_img, **params)
@@ -1851,8 +1881,6 @@ class MainWindow(QMainWindow):
                 QMessageBox.critical(self, "Export Map Error", str(exc))
 
     def _material_channel_image(self, channel):
-        if channel == "Displacement":
-            channel = "Height"
         if channel == "Base Color":
             return self._current_export_image()
         image = self.material_maps.get(channel)
@@ -1863,8 +1891,7 @@ class MainWindow(QMainWindow):
             return None
         generated = NormalGenerator.process(base, **self.normal_panel.get_parameters())
         for name, img in generated.items():
-            if name != "Displacement":
-                self.material_maps[name] = img.copy()
+            self.material_maps[name] = img.copy()
         self.processed_normal_map = generated.get("Normal")
         return self.material_maps.get(channel)
 
@@ -1873,16 +1900,15 @@ class MainWindow(QMainWindow):
             "Base Color": "_basecolor",
             "Normal": "_normal",
             "Roughness": "_roughness",
-            "Metallic": "_metallic",
             "AO": "_ao",
-            "Height": "_height",
-            "Displacement": "_height",
+            "Displacement": "_displacement",
             "Opacity": "_opacity",
-            "Emissive": "_emissive",
         }
         return suffixes.get(channel, f"_{channel.lower().replace(' ', '_')}")
 
     def closeEvent(self, event):
+        if hasattr(self, "material_update_timer"):
+            self.material_update_timer.stop()
         if self.export_thread and self.export_thread.isRunning():
             QMessageBox.warning(
                 self,
@@ -1984,6 +2010,9 @@ class MainWindow(QMainWindow):
         screen = self.screen() or QApplication.primaryScreen()
         if screen:
             avail = screen.availableGeometry()
+            min_w = min(720, max(360, avail.width() - 32))
+            min_h = min(520, max(360, avail.height() - 80))
+            self.setMinimumSize(min_w, min_h)
             geo = self.geometry()
             if geo.width() > avail.width() or geo.height() > avail.height():
                 nw = min(geo.width(), avail.width() - 40)
@@ -1992,8 +2021,8 @@ class MainWindow(QMainWindow):
                 ny = max(avail.y(), min(geo.y(), avail.y() + avail.height() - nh))
                 self.setGeometry(nx, ny, nw, nh)
             elif not geom_ba:
-                w = max(960, min(int(avail.width() * 0.82), avail.width() - 40))
-                h = max(640, min(int(avail.height() * 0.82), avail.height() - 60))
+                w = max(min_w, min(int(avail.width() * 0.82), avail.width() - 40))
+                h = max(min_h, min(int(avail.height() * 0.82), avail.height() - 60))
                 x = avail.x() + (avail.width() - w) // 2
                 y = avail.y() + (avail.height() - h) // 2
                 self.setGeometry(x, y, w, h)
@@ -2022,6 +2051,18 @@ class MainWindow(QMainWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        if not hasattr(self, "rail") or not hasattr(self, "inspector"):
+            return
+        compact = self.width() < 1180
+        self.rail.set_compact(compact)
+        if compact:
+            # Keep a usable inspector without forcing the center viewport off
+            # screen on small laptops and scaled displays.
+            available_for_inspector = self.width() - self.rail.width() - 160
+            inspector_width = max(220, min(300, available_for_inspector))
+            self.inspector.setFixedWidth(inspector_width)
+        else:
+            self.inspector.setFixedWidth(372)
 
     def showEvent(self, event):
         super().showEvent(event)
@@ -2035,66 +2076,3 @@ class MainWindow(QMainWindow):
                 nx = max(avail.x(), min(geo.x(), avail.x() + avail.width() - nw))
                 ny = max(avail.y(), min(geo.y(), avail.y() + avail.height() - nh))
                 self.setGeometry(nx, ny, nw, nh)
-
-    def _start_update_check(self):
-        from ..utils.updater import UpdateChecker, cleanup_stale_update
-        cleanup_stale_update()
-        self._update_checker = UpdateChecker(self)
-        self._update_checker.update_found.connect(self._on_update_found)
-        self._update_checker.start()
-
-    def _on_update_found(self, version: str, download_url: str, release_notes: str):
-        from ..utils.updater import UpdateBanner
-        if not download_url:
-            return
-        self._update_banner = UpdateBanner(version, self)
-        self._update_banner.set_info(download_url, release_notes)
-        self._update_banner.download_requested.connect(self._on_update_download)
-        self._update_banner.dismiss_requested.connect(self._on_update_dismiss)
-        central = self.centralWidget()
-        if central and central.layout():
-            central.layout().insertWidget(0, self._update_banner)
-        self._update_banner.show()
-
-    def _on_update_dismiss(self):
-        if self._update_banner:
-            self._update_banner.setParent(None)
-            self._update_banner.deleteLater()
-            self._update_banner = None
-
-    def _on_update_download(self):
-        from ..utils.updater import UpdateBanner
-        if not self._update_banner:
-            return
-        url = self._update_banner._download_url
-        if not url:
-            return
-        self._update_banner.show_progress()
-        from ..utils.updater import UpdateDownloader
-        self._update_downloader = UpdateDownloader(url, self)
-        self._update_downloader.progress.connect(self._on_update_progress)
-        self._update_downloader.finished_ok.connect(self._on_update_downloaded)
-        self._update_downloader.error.connect(self._on_update_error)
-        self._update_downloader.start()
-
-    def _on_update_progress(self, pct: int):
-        if self._update_banner:
-            self._update_banner.set_progress(pct)
-
-    def _on_update_downloaded(self, new_exe: str):
-        from ..utils.updater import UpdateBanner
-        current = _current_exe_path()
-        if not current:
-            if self._update_banner:
-                self._update_banner.show_error("Cannot determine app path")
-            return
-        if self._update_banner:
-            self._update_banner.show_complete()
-        from ..utils.updater import apply_update_and_restart
-        download_url = self._update_banner._download_url if self._update_banner else ""
-        apply_update_and_restart(new_exe, current, download_url=download_url)
-        QTimer.singleShot(500, QApplication.quit)
-
-    def _on_update_error(self, msg: str):
-        if self._update_banner:
-            self._update_banner.show_error(msg)

@@ -64,6 +64,36 @@ def blend_patch_jit(canvas, patch, mask, top, left, target_h, target_w):
 
 
 @jit(nopython=True, fastmath=True, cache=True)
+def accumulate_patch_jit(accum, weights, patch, mask, top, left, target_h, target_w):
+    """Add a patch's premultiplied colour and alpha to wrapped output."""
+    ph = patch.shape[0]
+    pw = patch.shape[1]
+    y1 = top if top > 0 else 0
+    y2 = top + ph if top + ph < target_h else target_h
+    x1 = left if left > 0 else 0
+    x2 = left + pw if left + pw < target_w else target_w
+
+    if y1 >= y2 or x1 >= x2:
+        return
+
+    is_color = accum.ndim == 3
+    channels = accum.shape[2] if is_color else 1
+    for y in range(y1, y2):
+        py = y - top
+        for x in range(x1, x2):
+            px = x - left
+            alpha = mask[py, px, 0] if mask.ndim == 3 else mask[py, px]
+            if alpha <= 0.001:
+                continue
+            weights[y, x] += alpha
+            if is_color:
+                for c in range(channels):
+                    accum[y, x, c] += patch[py, px, c] * alpha
+            else:
+                accum[y, x] += patch[py, px, 0] * alpha
+
+
+@jit(nopython=True, fastmath=True, cache=True)
 def synthesis_splat_jit(canvas, patches, masks, coords, indices, target_h, target_w):
     """
     Execute the splatting loop using Numba JIT.
@@ -80,6 +110,13 @@ def synthesis_splat_jit(canvas, patches, masks, coords, indices, target_h, targe
     num_splats = coords.shape[0]
     ph = patches.shape[1]
     pw = patches.shape[2]
+
+    # Normalized weighted compositing preserves each patch's full falloff.
+    # Sequential alpha compositing allowed the last patch drawn to overwrite
+    # the feather of earlier patches, which produced hard bands in places.
+    base_weight = np.float32(0.001)
+    accum = canvas.astype(np.float32) * base_weight
+    weights = np.full((target_h, target_w), base_weight, dtype=np.float32)
 
     for i in range(num_splats):
         top = coords[i, 0]
@@ -108,7 +145,17 @@ def synthesis_splat_jit(canvas, patches, masks, coords, indices, target_h, targe
                 draw_left = left - tx * target_w
                 if draw_left >= target_w or draw_left + pw <= 0:
                     continue
-                blend_patch_jit(canvas, patch, mask, draw_top, draw_left,
-                                 target_h, target_w)
+                accumulate_patch_jit(accum, weights, patch, mask, draw_top,
+                                     draw_left, target_h, target_w)
+
+    if canvas.ndim == 3:
+        for y in range(target_h):
+            for x in range(target_w):
+                for c in range(canvas.shape[2]):
+                    canvas[y, x, c] = accum[y, x, c] / weights[y, x]
+    else:
+        for y in range(target_h):
+            for x in range(target_w):
+                canvas[y, x] = accum[y, x] / weights[y, x]
 
     return canvas
