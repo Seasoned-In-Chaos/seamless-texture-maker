@@ -4,6 +4,7 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QGridLayout,
     QLabel,
+    QPushButton,
     QWidget,
 )
 
@@ -110,34 +111,41 @@ class MaterialControlPanel(PanelShell):
         self.layout.addWidget(self.roughness_card)
 
         # 3. AMBIENT OCCLUSION
+        # Controls mirror the NormalMap-Online reference AO panel exactly
+        # (cpetry.github.io/NormalMap-Online): Strength/Mean/Range in [0,1],
+        # Blur/Sharp in [-32, 32], Invert, and a Reset to default button.
         self.ao_card = PluginCard("Ambient Occlusion", "Micro-shadow depth and spread.")
-        self.ao_intensity = LabeledSlider("Depth", 0, 100, 50, "%")
-        self.ao_spread = LabeledSlider("Spread", 0, 100, 30, "%")
-        self.ao_invert = QCheckBox("Invert AO")
-        for w in [self.ao_intensity, self.ao_spread]:
+        self.ao_strength = LabeledSlider("Strength", 0.0, 1.0, 0.5, "", steps=100, decimals=2)
+        self.ao_mean = LabeledSlider("Mean", 0.0, 1.0, 1.0, "", steps=100, decimals=2)
+        self.ao_range = LabeledSlider("Range", 0.0, 1.0, 1.0, "", steps=100, decimals=2)
+        self.ao_blur_sharp = LabeledSlider("Blur/Sharp", -32, 32, 0, "", steps=64)
+        self.ao_invert = QCheckBox("Invert")
+        for w in [self.ao_strength, self.ao_mean, self.ao_range, self.ao_blur_sharp]:
             w.valueChanged.connect(self._on_live_update)
             self.ao_card.body.addWidget(w)
         self.ao_invert.toggled.connect(self._on_live_update)
         self.ao_card.body.addWidget(self.ao_invert)
+        self.ao_reset_btn = QPushButton("Reset to default")
+        self.ao_reset_btn.clicked.connect(self._on_ao_reset)
+        self.ao_card.body.addWidget(self.ao_reset_btn)
         self.layout.addWidget(self.ao_card)
 
         # 5. DISPLACEMENT
+        # Controls mirror the NormalMap-Online reference Displacement panel
+        # exactly: Contrast in [-1, 1] (default -0.5), Blur/Sharp in
+        # [-32, 32], Invert, and a Reset to default button.
         self.height_card = PluginCard("Displacement", "Surface displacement for tessellation and parallax.")
-        self.height_depth = LabeledSlider("Depth Scale", 0, 100, 50, "%")
-        # Keep the default height signal intact; NVIDIA's normal conversion
-        # applies its derivative filter directly instead of pre-blurring it.
-        self.height_smooth = LabeledSlider("Smoothing", 0, 100, 0, "%")
-        self.height_invert = QCheckBox("Invert Displacement")
-        self.height_contrast = QComboBox()
-        self.height_contrast.addItems(["Balanced", "Auto", "Soft", "Sharp"])
-        for w in [self.height_depth, self.height_smooth]:
+        self.height_contrast = LabeledSlider("Contrast", -1.0, 1.0, -0.5, "", steps=200, decimals=2)
+        self.height_blur_sharp = LabeledSlider("Blur/Sharp", -32, 32, 0, "", steps=64)
+        self.height_invert = QCheckBox("Invert")
+        for w in [self.height_contrast, self.height_blur_sharp]:
             w.valueChanged.connect(self._on_live_update)
             self.height_card.body.addWidget(w)
         self.height_invert.toggled.connect(self._on_live_update)
-        self.height_contrast.currentTextChanged.connect(self._on_live_update)
         self.height_card.body.addWidget(self.height_invert)
-        self.height_card.body.addWidget(QLabel("Contrast Handling"))
-        self.height_card.body.addWidget(self.height_contrast)
+        self.height_reset_btn = QPushButton("Reset to default")
+        self.height_reset_btn.clicked.connect(self._on_height_reset)
+        self.height_card.body.addWidget(self.height_reset_btn)
         self.layout.addWidget(self.height_card)
 
         # 6. OPACITY
@@ -157,6 +165,29 @@ class MaterialControlPanel(PanelShell):
     def _on_live_update(self, *_args):
         self.parametersChanged.emit()
         self.livePreviewRequested.emit()
+
+    def _on_ao_reset(self):
+        for w, v in (
+            (self.ao_strength, 0.5), (self.ao_mean, 1.0),
+            (self.ao_range, 1.0), (self.ao_blur_sharp, 0),
+        ):
+            w.blockSignals(True)
+            w.setValue(v)
+            w.blockSignals(False)
+        self.ao_invert.blockSignals(True)
+        self.ao_invert.setChecked(False)
+        self.ao_invert.blockSignals(False)
+        self._on_live_update()
+
+    def _on_height_reset(self):
+        for w, v in ((self.height_contrast, -0.5), (self.height_blur_sharp, 0)):
+            w.blockSignals(True)
+            w.setValue(v)
+            w.blockSignals(False)
+        self.height_invert.blockSignals(True)
+        self.height_invert.setChecked(False)
+        self.height_invert.blockSignals(False)
+        self._on_live_update()
 
     def set_active_map(self, name):
         """Show controls for the selected material channel only."""
@@ -207,13 +238,14 @@ class MaterialControlPanel(PanelShell):
             "rough_intensity": self.rough_intensity.value() / 100.0,
             "rough_contrast": self.rough_contrast.value() / 100.0,
             "rough_invert": self.rough_invert.isChecked(),
-            "ao_intensity": self.ao_intensity.value() / 100.0,
-            "ao_spread": self.ao_spread.value() / 100.0,
+            "ao_strength": self.ao_strength.value(),
+            "ao_mean": self.ao_mean.value(),
+            "ao_range": self.ao_range.value(),
+            "ao_blur_sharp": self.ao_blur_sharp.value(),
             "ao_invert": self.ao_invert.isChecked(),
-            "height_depth": self.height_depth.value() / 100.0,
-            "height_smooth": self.height_smooth.value() / 100.0,
+            "height_contrast": self.height_contrast.value(),
+            "height_blur_sharp": self.height_blur_sharp.value(),
             "height_invert": self.height_invert.isChecked(),
-            "height_contrast": self.height_contrast.currentText().lower(),
             "alpha_threshold": self.alpha_threshold.value() / 100.0,
             "alpha_softness": self.alpha_softness.value() / 100.0,
         }

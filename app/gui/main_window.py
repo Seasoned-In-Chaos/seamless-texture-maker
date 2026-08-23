@@ -35,12 +35,10 @@ from ..core.seamless import SeamlessProcessor
 from ..utils.app_logging import get_logger, log_exception
 from ..utils.config import APP_VERSION, load_settings, save_settings
 from ..utils.image_io import (
-    ensure_writable_directory,
     get_file_info,
     get_format_filter,
     get_output_path,
     load_image,
-    sanitize_filename_component,
     save_image,
 )
 
@@ -63,8 +61,10 @@ class ProcessingThread(QThread):
             t0 = time.time()
             processor = SeamlessProcessor()
             processor.load_image(self.image)
-            processor.set_parameters(**self.params)
-            result = processor.process()
+            # Pass params through process() itself (it already calls
+            # set_parameters internally) so flags read from the params
+            # argument directly, like delight_only, are honored.
+            result = processor.process(params=self.params)
             self.finished.emit(result, time.time() - t0, self.generation)
         except Exception as exc:
             log_exception(logger, "Texture processing failed", exc)
@@ -221,210 +221,6 @@ class ImageLoadThread(QThread):
         except Exception as exc:
             log_exception(logger, f"Image load failed for {self.path}", exc)
             self.error.emit(self.path, str(exc), self.generation)
-
-
-class PBRExportThread(QThread):
-    finished = pyqtSignal(object)
-    error = pyqtSignal(str)
-
-    def __init__(self, base_img, gen_params, data, metadata, parent=None):
-        super().__init__(parent)
-        self.base_img = base_img.copy()
-        self.gen_params = gen_params.copy()
-        self.data = data.copy()
-        self.metadata = metadata
-
-    def run(self):
-        try:
-            written = export_pbr_package(self.base_img, self.gen_params, self.data, self.metadata)
-            self.finished.emit({"engine": self.data.get("engine", "PBR"), "written": written})
-        except Exception as exc:
-            log_exception(logger, "PBR export failed", exc)
-            self.error.emit(str(exc))
-
-
-def export_pbr_package(base_img, gen_params, data, metadata=None):
-    export_dir = ensure_writable_directory(data.get("directory", ""))
-    material = sanitize_filename_component(data.get("name", "Material_01"), "Material_01")
-    token = sanitize_filename_component(data.get("renderer_token", "PBR"), "PBR")
-    data = data.copy()
-    data["name"] = material
-    data["renderer_token"] = token
-
-    if data.get("create_subfolder"):
-        subfolder = sanitize_filename_component(data.get("subfolder_name") or f"{material}_{token}", f"{material}_{token}")
-        export_dir = ensure_writable_directory(os.path.join(export_dir, subfolder))
-
-    h, w = base_img.shape[:2]
-    target_res = int(data.get("resolution", max(h, w)))
-    if target_res > 0 and target_res != max(h, w):
-        scale = target_res / max(h, w)
-        export_base = cv2.resize(
-            base_img,
-            (max(1, int(w * scale)), max(1, int(h * scale))),
-            interpolation=cv2.INTER_CUBIC if scale > 1.0 else cv2.INTER_AREA,
-        )
-    else:
-        export_base = base_img
-
-    generated_maps = NormalGenerator.process(export_base, **gen_params)
-    normal = generated_maps["Normal"]
-    if _normal_format_is_directx(gen_params.get("normal_format")) != _normal_format_is_directx(data.get("normal_format")):
-        normal = convert_normal_format(normal)
-
-    maps = {
-        "BaseColor": export_base,
-        "Normal": normal,
-        "Roughness": generated_maps["Roughness"],
-        "AO": generated_maps["AO"],
-        "Displacement": generated_maps["Displacement"],
-        "Opacity": generated_maps["Opacity"],
-    }
-
-    written = write_renderer_maps(export_dir, maps, data, metadata)
-    return written
-
-
-def write_renderer_maps(export_dir, maps, data, metadata=None):
-    written = {}
-    selected = data.get("maps", {})
-    token = data.get("renderer_token", "PBR")
-    material = data.get("name", "Material")
-    ext = export_extension(data.get("format", "png"))
-
-    def save_map(channel, image, suffix=None):
-        if not selected.get(channel, False):
-            return
-        image = prepare_export_image(image, data, channel)
-        out_suffix = suffix or renderer_channel_suffix(channel, data)
-        path = os.path.join(export_dir, f"{material}_{token}_{out_suffix}{ext}")
-        save_image(image, path, metadata=metadata)
-        written[channel] = path
-
-    if data.get("renderer_key") == "ue5":
-        if selected.get("BaseColor", False):
-            path = os.path.join(export_dir, f"T_{material}_D{ext}")
-            save_image(prepare_export_image(maps["BaseColor"], data, "BaseColor"), path, metadata=metadata)
-            written["BaseColor"] = path
-        if selected.get("Normal", False):
-            path = os.path.join(export_dir, f"T_{material}_N{ext}")
-            save_image(prepare_export_image(maps["Normal"], data, "Normal"), path, metadata=metadata)
-            written["Normal"] = path
-        if data.get("packing", False):
-            ao = gray_image(maps["AO"])
-            roughness = gray_image(maps["Roughness"])
-            reserved = np.zeros_like(roughness)
-            orm = cv2.merge([reserved, roughness, ao])
-            path = os.path.join(export_dir, f"T_{material}_ORM{ext}")
-            save_image(prepare_export_image(orm, data, "ORM"), path, metadata=metadata)
-            written["ORM"] = path
-        else:
-            save_map("AO", maps["AO"])
-            save_map("Roughness", maps["Roughness"])
-        save_map("Displacement", maps["Displacement"], "Displacement")
-        save_map("Opacity", maps["Opacity"], "Opacity")
-        return written
-
-    save_map("BaseColor", maps["BaseColor"])
-    save_map("Normal", maps["Normal"])
-    if uses_glossiness(data):
-        glossiness = cv2.bitwise_not(gray_image(maps["Roughness"]))
-        save_map("Roughness", glossiness, "Glossiness")
-    else:
-        save_map("Roughness", maps["Roughness"])
-    save_map("AO", maps["AO"])
-    save_map("Displacement", maps["Displacement"])
-    save_map("Opacity", maps["Opacity"])
-    return written
-
-
-def _normal_format_is_directx(value):
-    return "direct" in str(value or "").lower()
-
-
-def convert_normal_format(image):
-    """Flip the green channel when converting OpenGL Y+ to DirectX Y-."""
-    converted = image.copy()
-    max_value = 65535 if converted.dtype == np.uint16 else 255
-    if converted.ndim == 3 and converted.shape[2] >= 2:
-        converted[..., 1] = max_value - converted[..., 1]
-    return converted
-
-
-def prepare_export_image(image, data, channel):
-    """Apply the selected export bit depth and real renderer conversions."""
-    if channel == "Displacement":
-        image = clamp_displacement(image, data)
-
-    output_format = str(data.get("format", "png")).lower()
-    if output_format == "exr":
-        if image.dtype == np.uint16:
-            return image.astype(np.float32) / 65535.0
-        if image.dtype == np.uint8:
-            return image.astype(np.float32) / 255.0
-        values = np.nan_to_num(image.astype(np.float32), nan=0.0, posinf=255.0, neginf=0.0)
-        if values.size and float(np.nanmax(values)) > 1.0:
-            values /= 255.0
-        return np.clip(values, 0.0, 1.0)
-
-    bit_depth = str(data.get("bit_depth", "8-bit")).lower()
-    if "16" in bit_depth:
-        if image.dtype == np.uint16:
-            return image
-        values = image.astype(np.float32)
-        if values.size and float(np.nanmax(values)) <= 1.0:
-            values *= 65535.0
-        else:
-            values *= 257.0
-        return np.clip(values, 0, 65535).astype(np.uint16)
-
-    if image.dtype == np.uint16:
-        return (image / 257.0).astype(np.uint8)
-    if np.issubdtype(image.dtype, np.floating):
-        values = np.nan_to_num(image, nan=0.0, posinf=255.0, neginf=0.0)
-        if values.size and float(np.nanmax(values)) <= 1.0:
-            values *= 255.0
-        return np.clip(values, 0, 255).astype(np.uint8)
-    return image.astype(np.uint8, copy=False)
-
-
-def renderer_channel_suffix(channel, data):
-    if data.get("renderer_key") == "generic":
-        return channel
-    return {
-        "BaseColor": "BaseColor",
-        "Roughness": "Roughness",
-        "Normal": "Normal",
-        "AO": "AO",
-        "Displacement": "Displacement",
-        "Opacity": "Opacity",
-    }.get(channel, channel)
-
-
-def export_extension(fmt):
-    return {"png": ".png", "tiff": ".tiff", "tif": ".tiff", "tga": ".tga", "exr": ".exr"}.get(str(fmt).lower(), ".png")
-
-
-def gray_image(image):
-    if len(image.shape) == 2:
-        return image
-    return cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-
-
-def uses_glossiness(data):
-    opts = data.get("options", {})
-    return (
-        data.get("workflow") == "Specular / Glossiness"
-        or opts.get("Convert Roughness to Glossiness", False)
-        or opts.get("Reflection glossiness mode", False)
-    )
-
-
-def clamp_displacement(image, data):
-    if not data.get("options", {}).get("Clamp displacement values", False):
-        return image
-    gray = gray_image(image)
-    return cv2.cvtColor(np.clip(gray, 8, 247).astype(np.uint8), cv2.COLOR_GRAY2BGR)
 
 
 class TopBar(QWidget):
@@ -915,11 +711,39 @@ class MaterialSphereCard(PreviewCard):
         return (id(image), image.shape, str(image.dtype))
 
 class MainWindow(QMainWindow):
+    # Quality tiers for the three racing preview mechanisms -- see
+    # _channel_quality_state in __init__ for why this exists.
+    _QUALITY_ROUGH = 1   # stage 1: synchronous, scale=0.125
+    _QUALITY_MEDIUM = 2  # stage 2: PreviewThread, capped to 600px
+    _QUALITY_FULL = 3    # full-resolution ProcessingThread pass
+
+    def _should_apply_result(self, channel, edit_generation, quality):
+        """Gate a preview/processing result before it's displayed.
+
+        Applies only if it's for a newer edit than whatever is currently
+        shown for this channel, or an equal-or-higher quality result for
+        the same edit -- so a slow rough render can never land after (and
+        overwrite) a fast full-resolution one for the same slider state.
+        """
+        last = self._channel_quality_state.get(channel)
+        if last is not None and edit_generation < last[0]:
+            return False
+        if last is not None and edit_generation == last[0] and quality < last[1]:
+            return False
+        self._channel_quality_state[channel] = (edit_generation, quality)
+        return True
+
     def _on_preview_ready(self, result, generation):
         if generation == self._preview_generation and result is not None:
-            self.image_viewer.set_after_image(result)
-            if self.processed_normal_map is not None:
-                self.image_viewer.set_map("Normal", self.processed_normal_map)
+            channel = getattr(self, "_preview_target_channel", "Base Color")
+            target_shape = getattr(self, "_preview_target_shape", None)
+            if target_shape is not None and result.shape[:2] != tuple(target_shape):
+                import cv2
+                th, tw = target_shape
+                result = cv2.resize(result, (tw, th), interpolation=cv2.INTER_LINEAR)
+            edit_gen = getattr(self, "_preview_target_edit_generation", 0)
+            if self._should_apply_result(channel, edit_gen, self._QUALITY_MEDIUM):
+                self._apply_edit_result(channel, result, preview=True)
 
     def _on_preview_error(self, msg, generation):
         if generation == self._preview_generation:
@@ -931,7 +755,6 @@ class MainWindow(QMainWindow):
         self.current_file_path = None
         self.image_metadata = None
         self.loading_threads = []
-        self.export_thread = None
         self.processing_thread = None
         self.preview_thread = PreviewThread()
         self.preview_thread.result_ready.connect(self._on_preview_ready)
@@ -948,6 +771,23 @@ class MainWindow(QMainWindow):
         self._processing_generation = 0
         self._preview_generation = 0
         self._material_generation = 0
+        self._preview_target_channel = "Base Color"
+        self._preview_target_shape = None
+        self._preview_target_edit_generation = 0
+        self._processing_target_channel = "Base Color"
+        self._processing_target_edit_generation = 0
+        # Three independent mechanisms race to update the same channel's
+        # preview: the synchronous rough render (stage 1), the background
+        # medium-quality render (stage 2, via PreviewThread), and the
+        # background full-resolution render. Each is progressively slower
+        # but higher quality, and their completion order isn't guaranteed --
+        # a slow stage-1/2 result can land after a fast full-res one and
+        # silently overwrite it with something blurrier. _edit_generation
+        # and _channel_quality_state (below) make that impossible: a result
+        # only gets applied if it's for a newer edit than what's already
+        # showing, or an equal-or-higher quality result for the same edit.
+        self._edit_generation = 0
+        self._channel_quality_state: dict[str, tuple[int, int]] = {}
         self._active_mode = "seamless"
         # Undo / Redo stacks store numpy image snapshots.
         self._undo_stack = collections.deque(maxlen=20)
@@ -982,7 +822,7 @@ class MainWindow(QMainWindow):
         self.rail = ToolRail()
         self.rail.navChanged.connect(self._on_nav_changed)
         self.rail.openClicked.connect(self._open_file)
-        self.rail.exportClicked.connect(self._pbr_export_system)
+        self.rail.exportClicked.connect(self._quick_export)
 
         root.addWidget(self.rail)
 
@@ -1034,7 +874,6 @@ class MainWindow(QMainWindow):
         self._add_menu_action(fm, "&Save Current Texture", "Ctrl+S", self._save_file)
         self._add_menu_action(fm, "Save &As...", "Ctrl+Shift+S", self._save_file_as)
         self._add_menu_action(fm, "Export Selected &Map...", "Ctrl+E", self._export_normal_map)
-        self._add_menu_action(fm, "Export Renderer &Pipeline...", "Ctrl+Shift+E", self._pbr_export_system)
         fm.addSeparator()
         self._add_menu_action(fm, "E&xit", "Alt+F4", self.close)
 
@@ -1177,7 +1016,6 @@ class MainWindow(QMainWindow):
                 ("Ctrl+S",          "Save current texture"),
                 ("Ctrl+Shift+S",    "Save As…"),
                 ("Ctrl+E",          "Export selected map"),
-                ("Ctrl+Shift+E",    "Export renderer pipeline"),
                 ("Alt+F4",          "Exit"),
             ]),
             ("View & Navigation", [
@@ -1293,6 +1131,76 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_redo_action"):
             self._redo_action.setEnabled(len(self._redo_stack) > 0)
 
+    def _set_material_base(self, image):
+        if image is None:
+            self.material_maps = {}
+            self.processed_normal_map = None
+            self.image_viewer.clear_generated_maps()
+            return
+        self._material_generation += 1
+        self.material_maps = {"Base Color": image.copy()}
+        self.processed_normal_map = None
+        self.image_viewer.set_map("Base Color", image)
+        self.image_viewer.clear_generated_maps()
+
+    def _selected_edit_channel(self):
+        """Return the material channel that Seamless should edit."""
+        if not hasattr(self, "image_viewer"):
+            return "Base Color"
+        return self.image_viewer.map_selector.checked_name() or "Base Color"
+
+    def _edit_source_image(self, channel=None):
+        """Get the source image for the currently selected editable channel."""
+        channel = channel or self._selected_edit_channel()
+        if channel == "Base Color":
+            return self.image_np
+        image = self.material_maps.get(channel)
+        if image is None:
+            # This channel hasn't been generated yet (e.g. the user selected
+            # it in Material Lab before ever touching a slider). Falling
+            # back to Base Color here would silently run the seamless
+            # method on the wrong data and then write that result back
+            # under this channel's name, permanently mislabeling it --
+            # generate the real map on demand instead.
+            image = self._material_channel_image(channel)
+        return image if image is not None else self.image_np
+
+    def _apply_edit_result(self, channel, result, preview=False):
+        """Display or commit a Seamless result for the edited channel.
+
+        Preview renders are intentionally display-only. A reduced-resolution
+        preview must not become the source for the next preview or
+        full-resolution pass while a slider is being dragged.
+        """
+        if channel == "Base Color":
+            if preview:
+                self.image_viewer.set_after_image(result)
+            # This result was requested against whichever channel was active
+            # when the request was made; by the time it lands asynchronously,
+            # the user may have switched to viewing a different, still-valid
+            # channel. Refresh the Base Color data without yanking the view
+            # back or discarding other maps -- _set_material_base's
+            # clear_generated_maps() would force-reselect Base Color, which
+            # is exactly the "must not force the UI back to that channel"
+            # rule the comment below already states for every other channel.
+            # The regeneration kicked off here refreshes stale maps in place.
+            self.material_maps["Base Color"] = result.copy()
+            self._material_generation += 1
+            self._on_normal_live_update()
+            return
+
+        # Generated maps are independent material channels. Processing one
+        # must not replace Base Color or force the UI back to that channel.
+        # Keep reduced-resolution previews out of material_maps so later
+        # stages always process the original full-resolution channel.
+        if preview:
+            self.image_viewer.set_map(channel, result)
+            return
+        self.material_maps[channel] = result.copy()
+        self.image_viewer.set_map(channel, result)
+        if channel == "Normal":
+            self.processed_normal_map = result.copy()
+
     def _undo(self):
         if not self._undo_stack or self.image_np is None:
             self.statusBar().showMessage("Nothing to undo", 2000)
@@ -1319,12 +1227,10 @@ class MainWindow(QMainWindow):
         self.fullres_timer.stop()
         self._processing_generation += 1
         self._preview_generation += 1
-        self._material_generation += 1
         self.processor.load_image(self.image_np)
-        self.material_maps["Base Color"] = self.image_np.copy()
         self.image_viewer.set_before_image(self.image_np)
         self.image_viewer.set_after_image(self.image_np)
-        self.image_viewer.set_map("Base Color", self.image_np)
+        self._set_material_base(self.image_np)
         self.image_viewer.select_map("Base Color")
         self._on_normal_live_update()
         steps = len(self._undo_stack)
@@ -1510,7 +1416,6 @@ class MainWindow(QMainWindow):
             return
         try:
             self._preview_generation += 1
-            self._material_generation += 1
             self._processing_generation += 1
             self.processor.load_image(image)
             self.current_file_path = path
@@ -1521,10 +1426,9 @@ class MainWindow(QMainWindow):
             self._redo_stack.clear()
             self._update_undo_actions()
             self.image_np = image.copy()
-            self.material_maps = {"Base Color": image.copy()}
-            self.processed_normal_map = None
             self.image_viewer.set_before_image(image)
             self.image_viewer.set_after_image(None)
+            self._set_material_base(image)
             self.image_viewer.fit_to_view()
             self.control_panel.set_image_loaded(True)
             self.normal_panel.set_image_loaded(True)
@@ -1560,6 +1464,7 @@ class MainWindow(QMainWindow):
         QMessageBox.critical(self, "Open Texture", f"Could not open this texture:\n{path}\n\n{msg}")
 
     def _on_parameters_changed(self):
+        self._edit_generation += 1
         self.fullres_timer.stop()
         self.fullres_timer.start()
 
@@ -1568,7 +1473,16 @@ class MainWindow(QMainWindow):
             self._on_normal_live_update()
             return
         if self.processor.original_image is not None:
+            self._edit_generation += 1
+            # Restart (not just stop) the full-res settle here too. This
+            # fires on every sliderMoved tick alongside parametersChanged's
+            # own fullres_timer.start(), and whichever of the two fires
+            # last determines whether the timer ends up armed. Since only
+            # stopping it here could leave it permanently cancelled after
+            # the last drag tick, the preview would then settle at the
+            # low-res rough/stage2 render and never reach full quality.
             self.fullres_timer.stop()
+            self.fullres_timer.start()
             # Cancel higher stages and restart from stage 1
             self._preview_stage2_timer.stop()
             self._preview_stage1_timer.start()
@@ -1579,20 +1493,42 @@ class MainWindow(QMainWindow):
         self._preview_stage2_timer.start()
 
     def _request_preview_stage2(self):
-        """Stage 2: 80ms debounce, scale=0.5 for medium quality."""
-        self._process_at_scale(0.5)
+        """Stage 2: 80ms debounce, medium-quality preview via the background
+        PreviewThread rather than a synchronous call. This step processes a
+        real medium-resolution image (e.g. 600x1000 from a 1200x2000
+        source) through the full seamless algorithm; running that
+        synchronously on the GUI thread meant a fast or sustained slider
+        drag queued up a backlog of these calls one after another, each one
+        re-arming the timers and pushing the full-resolution settle
+        further back -- so the preview could stay stuck on the blurry
+        rough render for as long as the drag (and its backlog) continued.
+        The PreviewThread already coalesces rapid requests (mutex + restart
+        flag) and discards stale results by generation, so offloading here
+        fixes the backlog instead of just working around it."""
+        self._request_live_preview()
 
     def _process_at_scale(self, scale: float):
         """Process the texture at a reduced scale and display the result."""
-        if self.image_np is None:
+        channel = self._selected_edit_channel()
+        source = self._edit_source_image(channel)
+        if source is None:
             return
+        edit_generation = self._edit_generation
         import cv2
-        h, w = self.image_np.shape[:2]
+        h, w = source.shape[:2]
         small_w = max(1, int(w * scale))
         small_h = max(1, int(h * scale))
-        small = cv2.resize(self.image_np, (small_w, small_h), interpolation=cv2.INTER_AREA)
+        # Resize the channel actually being edited, not always Base Color --
+        # this was the direct cause of Seamless-tab edits on a non-Base-Color
+        # channel silently processing Base Color data and writing that
+        # result back under the active channel's name.
+        small = cv2.resize(source, (small_w, small_h), interpolation=cv2.INTER_AREA)
         params = self.control_panel.get_parameters()
         params["preprocessing"] = self.pre_panel.get_parameters()
+        # While tuning Delight, preview only the delight result — running it
+        # through the seamless method too would mix in tiling/blend changes
+        # unrelated to delighting and wouldn't match what Apply Delight commits.
+        params["delight_only"] = self._active_mode == "delight"
         try:
             # Preview processing must not mutate the full-resolution processor
             # that the worker thread uses for export and final processing.
@@ -1604,7 +1540,8 @@ class MainWindow(QMainWindow):
             if result is not None:
                 if result.shape[0] != h or result.shape[1] != w:
                     result = cv2.resize(result, (w, h), interpolation=cv2.INTER_LINEAR)
-                self.image_viewer.set_after_image(result)
+                if self._should_apply_result(channel, edit_generation, self._QUALITY_ROUGH):
+                    self._apply_edit_result(channel, result, preview=True)
         except Exception as exc:
             import logging
             logging.getLogger("seams.preview").debug("stage preview failed at scale %.3f: %s", scale, exc)
@@ -1612,9 +1549,21 @@ class MainWindow(QMainWindow):
     def _request_live_preview(self):
         params = self.control_panel.get_parameters()
         params["preprocessing"] = self.pre_panel.get_parameters()
-        if self.image_np is not None:
+        params["delight_only"] = self._active_mode == "delight"
+        channel = self._selected_edit_channel()
+        source = self._edit_source_image(channel)
+        if source is not None:
             self._preview_generation += 1
-            self.preview_thread.request(self.image_np, params, self._preview_generation)
+            self._preview_target_channel = channel
+            # SeamlessProcessor.load_image() internally caps preview-mode
+            # processing to 600px on the long edge for speed, so the result
+            # PreviewThread emits won't match the source resolution -- track
+            # it here so _on_preview_ready can resize back up for display.
+            # Preview results stay display-only, so the stored channel data
+            # remains the full-resolution source for the settled render.
+            self._preview_target_shape = source.shape[:2]
+            self._preview_target_edit_generation = self._edit_generation
+            self.preview_thread.request(source, params, self._preview_generation)
 
     def _apply_delight(self):
         if self.image_np is None:
@@ -1640,7 +1589,6 @@ class MainWindow(QMainWindow):
         self.image_np = base_color.copy()
         self._processing_generation += 1
         self._preview_generation += 1
-        self._material_generation += 1
         self.processor.load_image(self.image_np)
         
         self.pre_panel._on_reset()
@@ -1649,8 +1597,7 @@ class MainWindow(QMainWindow):
         
         self.image_viewer.set_before_image(self.image_np)
         self.image_viewer.set_after_image(self.image_np)
-        self.image_viewer.set_map("Base Color", self.image_np)
-        self.material_maps["Base Color"] = self.image_np.copy()
+        self._set_material_base(self.image_np)
         self.image_viewer.select_map("Base Color")
         self.image_viewer.set_delighted_image(None)
         self.control_panel.set_processed(True)
@@ -1658,7 +1605,9 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Delight applied to BaseColor", 3000)
 
     def _process_texture(self):
-        if self.image_np is None:
+        channel = self._selected_edit_channel()
+        source = self._edit_source_image(channel)
+        if source is None:
             return
         if self.processing_thread and self.processing_thread.isRunning():
             self._pending_reprocess = True
@@ -1668,10 +1617,13 @@ class MainWindow(QMainWindow):
         self.progress.show()
         params = self.control_panel.get_parameters()
         params["preprocessing"] = self.pre_panel.get_parameters()
+        params["delight_only"] = self._active_mode == "delight"
         self.processor.set_parameters(**params)
         self._processing_generation += 1
         generation = self._processing_generation
-        self.processing_thread = ProcessingThread(self.image_np, params, generation, self)
+        self._processing_target_channel = channel
+        self._processing_target_edit_generation = self._edit_generation
+        self.processing_thread = ProcessingThread(source, params, generation, self)
         self.processing_thread.finished.connect(self._on_processing_finished)
         self.processing_thread.error.connect(self._on_processing_error)
         self.processing_thread.start()
@@ -1684,14 +1636,29 @@ class MainWindow(QMainWindow):
             if self._pending_reprocess:
                 self._process_texture()
             return
-        self.processor.set_processed_image(result)
-        self.image_viewer.set_after_image(result)
-        self.image_viewer.set_map("Base Color", result)
-        self.material_maps["Base Color"] = result.copy()
-        self.control_panel.set_processed(True)
-        
-        # Update all material maps based on current Material Lab sliders
-        self._on_normal_live_update()
+        channel = getattr(self, "_processing_target_channel", "Base Color")
+        edit_gen = getattr(self, "_processing_target_edit_generation", 0)
+        # Even a full-resolution result can be stale: if a newer edit has
+        # already landed a result for this channel (from any of the three
+        # preview mechanisms) while this pass was computing, applying this
+        # older one now would visibly regress the preview backwards.
+        if self._should_apply_result(channel, edit_gen, self._QUALITY_FULL):
+            if channel == "Base Color":
+                self.processor.set_processed_image(result)
+                self.image_viewer.set_after_image(result)
+                # Same async race as _apply_edit_result: this full-res result
+                # was requested against Base Color, but the user may have
+                # since switched to another channel. Don't force the view
+                # back or discard other maps -- just refresh the data; the
+                # regeneration below refreshes stale maps in place.
+                self.material_maps["Base Color"] = result.copy()
+                self._material_generation += 1
+                self.control_panel.set_processed(True)
+
+                # Update all material maps based on current Material Lab sliders.
+                self._on_normal_live_update()
+            else:
+                self._apply_edit_result(channel, result)
 
 
         if self._active_mode == "delight":
@@ -1718,7 +1685,9 @@ class MainWindow(QMainWindow):
         if self.image_np is None:
             return
         params = self.normal_panel.get_parameters()
-        base = self.processor.processed_image if self.processor.processed_image is not None else self.image_np
+        base = self.material_maps.get("Base Color")
+        if base is None:
+            base = self.processor.processed_image if self.processor.processed_image is not None else self.image_np
         self._material_generation += 1
         self.material_thread.request(base, params, self._material_generation)
 
@@ -1780,88 +1749,6 @@ class MainWindow(QMainWindow):
             if path:
                 self._save_to_path(path)
 
-    def _pbr_export_system(self):
-        if self.processor.processed_image is None:
-            if self.image_np is None:
-                return
-            base_img = self.image_np
-        else:
-            base_img = self.processor.processed_image
-            
-        self.progress.setRange(0, 0)
-        self.progress.show()
-
-        params = self.normal_panel.get_parameters()
-        try:
-            # Generate lightweight thumbnails for the export dialog.
-            h, w = base_img.shape[:2]
-            thumb_size = 512
-            scale = min(1.0, thumb_size / max(h, w))
-            if scale < 1.0:
-                thumb_img = cv2.resize(base_img, (max(1, int(w*scale)), max(1, int(h*scale))), interpolation=cv2.INTER_AREA)
-            else:
-                thumb_img = base_img.copy()
-
-            from app.gui.image_viewer import numpy_to_pixmap
-            cached = self.image_viewer.maps
-            maps_preview = {
-                "BaseColor": numpy_to_pixmap(thumb_img),
-                "Base Color": numpy_to_pixmap(thumb_img),
-            }
-            needed = ["Normal", "Roughness", "AO", "Displacement", "Opacity"]
-            missing = [name for name in needed if cached.get(name) is None]
-            if missing:
-                preview_maps = NormalGenerator.process(thumb_img, **params)
-                for name in needed:
-                    maps_preview[name] = numpy_to_pixmap(preview_maps[name])
-            else:
-                for name in needed:
-                    maps_preview[name] = cached[name]
-            maps_preview["Ambient Occlusion"] = maps_preview["AO"]
-        except Exception as exc:
-            log_exception(logger, "Failed to prepare export dialog previews", exc)
-            QMessageBox.critical(self, "Export Error", f"Could not prepare export previews:\n{exc}")
-            return
-        finally:
-            self.progress.hide()
-        
-        from app.gui.export_dialog import PBRExportDialog
-        default_dir = self.settings.get("last_directory", os.path.expanduser("~"))
-        
-        dialog = PBRExportDialog(base_img, maps_preview, default_dir, self)
-        if dialog.exec():
-            data = dialog.get_export_data()
-            self._run_pbr_export(base_img, params, data)
-
-    def _run_pbr_export(self, base_img, gen_params, data):
-        if self.export_thread and self.export_thread.isRunning():
-            QMessageBox.information(self, "Export In Progress", "A renderer export is already running.")
-            return
-
-        self.settings["last_directory"] = data["directory"]
-        self.progress.setRange(0, 0)
-        self.progress.show()
-
-        self.export_thread = PBRExportThread(base_img, gen_params, data, self.image_metadata, self)
-        self.export_thread.finished.connect(self._on_pbr_export_finished)
-        self.export_thread.error.connect(self._on_pbr_export_error)
-        self.export_thread.finished.connect(self.export_thread.deleteLater)
-        self.export_thread.error.connect(self.export_thread.deleteLater)
-        self.export_thread.start()
-
-    def _on_pbr_export_finished(self, result):
-        self.progress.hide()
-        written = result.get("written", {})
-        engine = result.get("engine", "PBR")
-        self.statusBar().showMessage(f"{engine} export complete: {len(written)} files", 6000)
-        save_settings(self.settings)
-        self.export_thread = None
-
-    def _on_pbr_export_error(self, msg):
-        self.progress.hide()
-        self.export_thread = None
-        QMessageBox.critical(self, "Export Error", f"Failed to export PBR maps:\n{msg}")
-
     def _export_normal_map(self):
         channel = self.image_viewer.map_selector.checked_name()
         image = self._material_channel_image(channel)
@@ -1892,6 +1779,12 @@ class MainWindow(QMainWindow):
         generated = NormalGenerator.process(base, **self.normal_panel.get_parameters())
         for name, img in generated.items():
             self.material_maps[name] = img.copy()
+            # Keep the viewer's per-channel pixmap cache in lockstep with
+            # material_maps. Without this, a channel generated on demand
+            # here has correct data but no cached pixmap, so the viewport's
+            # own "nothing to show yet" fallback displays Base Color
+            # instead -- even while the real map exists right underneath.
+            self.image_viewer.set_map(name, img)
         self.processed_normal_map = generated.get("Normal")
         return self.material_maps.get(channel)
 
@@ -1909,14 +1802,6 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event):
         if hasattr(self, "material_update_timer"):
             self.material_update_timer.stop()
-        if self.export_thread and self.export_thread.isRunning():
-            QMessageBox.warning(
-                self,
-                "Export In Progress",
-                "A renderer export is still running. Wait for it to finish before closing SEAMS.",
-            )
-            event.ignore()
-            return
 
         self._save_window_geometry()
         self.settings["active_tool"] = self._active_mode
@@ -1970,6 +1855,12 @@ class MainWindow(QMainWindow):
         self.control_stack.setCurrentIndex(2)
         self.normal_panel.set_active_map(name)
         self.statusBar().showMessage(f"Material Lab: {name}", 1800)
+        # Selecting a generated channel (Normal/Roughness/AO/Displacement/
+        # Opacity) that hasn't been computed yet must not silently keep
+        # showing Base Color -- generate it now, same as navigating to
+        # Material Lab from the sidebar already does.
+        if name != "Base Color" and self.image_np is not None and name not in self.material_maps:
+            self._on_normal_live_update()
 
 
     def dragEnterEvent(self, event):

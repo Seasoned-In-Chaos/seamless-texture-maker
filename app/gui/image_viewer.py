@@ -119,6 +119,7 @@ class TextureViewport(QWidget):
         self._last_mouse = None
         self._dragging_pan = False
         self._dragging_split = False
+        self._split_ratio = 0.5
         self._last_content_rect = QRect()
         self.setMouseTracking(True)
 
@@ -1036,11 +1037,11 @@ class ImageViewer(QWidget):
     def set_after_image(self, img):
         pix = numpy_to_pixmap(img)
         self.maps["Base Color"] = pix
-        self.classic.viewport.set_after_image(img)
         self.studio.viewport3d.set_material_map("Base Color", img)
-        self.studio.viewport2d.set_after_image(img)
         self.map_selector.set_channel("Base Color", pix)
         if self.map_selector.checked_name() == "Base Color":
+            self.classic.viewport.set_after_image(img)
+            self.studio.viewport2d.set_after_image(img)
             self.studio.viewport2d.set_after_pixmap(pix)
 
     def set_map(self, name, img):
@@ -1051,8 +1052,14 @@ class ImageViewer(QWidget):
         if name == self.map_selector.checked_name():
             self.studio.viewport2d.set_after_pixmap(pix)
             self.classic.viewport.set_after_pixmap(pix)
-        if name == "Base Color":
-            self.classic.viewport.set_after_pixmap(pix)
+
+    def clear_generated_maps(self):
+        for name in ("Normal", "Roughness", "AO", "Displacement", "Opacity"):
+            self.maps.pop(name, None)
+            self.map_selector.set_channel(name, None)
+            self.studio.viewport3d.clear_material_map(name)
+        if self.map_selector.checked_name() != "Base Color":
+            self.select_map("Base Color")
 
     def _on_map_changed(self, name):
         pix = self.maps.get(name)

@@ -16,7 +16,6 @@ from typing import Dict
 import cv2
 import numpy as np
 
-from .ao_generator import generate_ao_map
 from .cache import make_pbr_key, ResultCache
 from .assertions import assert_float32
 
@@ -41,18 +40,27 @@ def _gray_to_bgr_u8(channel: np.ndarray, alpha: np.ndarray | None = None) -> np.
 
 # Removed compute_gradients_jit and gradients_to_normals_jit as they are replaced by cv2.Scharr pipeline
 
-def _apply_contrast(src: np.ndarray, mode: str) -> np.ndarray:
-    mode = (mode or "balanced").lower()
-    out = src
-    if mode == "auto":
-        lo, hi = np.percentile(out, (2.0, 98.0))
-        if hi > lo:
-            out = (out - lo) / (hi - lo)
-    elif mode == "soft":
-        out = 0.5 + (out - 0.5) * 0.65
-    elif mode == "sharp":
-        out = 0.5 + (out - 0.5) * 1.65
-    return np.clip(out, 0.0, 1.0)
+def _linear_contrast(src: np.ndarray, contrast: float) -> np.ndarray:
+    """Linear contrast adjustment, pivoted around mid-gray — the exact
+    formula used by the NormalMap-Online reference Displacement shader:
+    ``factor = (contrast + 1) / (1 - contrast)``. contrast in [-1, 1)."""
+    contrast = float(np.clip(contrast, -1.0, 0.999))
+    factor = (contrast + 1.0) / (1.0 - contrast)
+    return factor * (src - 0.5) + 0.5
+
+
+def _apply_blur_sharp(field: np.ndarray, blur_sharp: float) -> np.ndarray:
+    """Gaussian-blur (negative) or unsharp-mask sharpen (positive) a [0,1]
+    field, matching the NormalMap-Online reference's Blur/Sharp control
+    (range [-32, 32]) shared by the AO and Displacement panels."""
+    if not blur_sharp:
+        return field
+    sigma = 0.4 + abs(blur_sharp) * 0.12
+    blurred = cv2.GaussianBlur(field, (0, 0), sigmaX=sigma)
+    if blur_sharp > 0:
+        amount = min(abs(blur_sharp) / 32.0, 1.0) * 1.5
+        return field + (field - blurred) * amount
+    return blurred
 
 
 def _get_nvtt_sobel_kernel(filter_type: str = "blended_sobel", weights: tuple[float, float, float, float] = (1.0, 0.5, 0.25, 0.125)) -> tuple[np.ndarray, np.ndarray]:
@@ -184,38 +192,26 @@ def _compute_four_sample_slopes(h_map: np.ndarray, wrap: bool) -> tuple[np.ndarr
 
 
 def _compute_displacement(gray: np.ndarray, params: dict) -> np.ndarray:
-    """Compute displacement map (float32 [0,1]) using NVTT multi-scale gradient analysis."""
-    hi = params.get("height_depth", 0.5)
-    hs = params.get("height_smooth", 0.1)
+    """Compute displacement map (float32 [0,1]).
 
-    # Base source
-    height_source = 1.0 - gray if params.get("height_invert") else gray
-    height_source = _apply_contrast(height_source, params.get("height_contrast", "balanced"))
+    Matches the NormalMap-Online reference Displacement panel exactly
+    (cpetry.github.io/NormalMap-Online): Contrast is the shader's
+    linear-contrast formula (range [-1, 1], default -0.5); Blur/Sharp
+    (range [-32, 32]) blurs the result when negative or unsharp-mask
+    sharpens it when positive; Invert flips the result.
+    """
+    contrast = params.get("height_contrast", -0.5)
+    blur_sharp = params.get("height_blur_sharp", 0.0)
 
-    # NVTT multi-scale gradient decomposition:
-    # Scale 1: Fine detail (Sobel 3x3)
-    du3, dv3 = _compute_nvtt_slopes(height_source, "sobel_3x3", wrap=True)
-    mag3 = np.sqrt(du3**2 + dv3**2)
+    displacement = _linear_contrast(gray, contrast)
 
-    # Scale 2: Medium detail (Sobel 5x5)
-    du5, dv5 = _compute_nvtt_slopes(height_source, "sobel_5x5", wrap=True)
-    mag5 = np.sqrt(du5**2 + dv5**2)
+    if params.get("height_invert"):
+        displacement = 1.0 - displacement
 
-    # Scale 3: Large detail (Sobel 7x7)
-    du7, dv7 = _compute_nvtt_slopes(height_source, "sobel_7x7", wrap=True)
-    mag7 = np.sqrt(du7**2 + dv7**2)
+    displacement = np.clip(displacement, 0.0, 1.0)
+    displacement = _apply_blur_sharp(displacement, blur_sharp)
 
-    # Blend gradient magnitudes matching NVTT multi-frequency structure
-    detail = mag3 * 0.5 + mag5 * 0.35 + mag7 * 0.15
-    detail = np.clip(detail * 1.5, 0.0, 1.0)
-
-    # Combine structural elevation with surface gradient details
-    displacement = height_source * 0.7 + detail * 0.3
-
-    if hs > 0:
-        displacement = cv2.GaussianBlur(displacement, (0, 0), sigmaX=0.35 + hs * 10.0)
-
-    return np.clip(displacement * (hi * 2.0), 0.0, 1.0)
+    return np.clip(displacement, 0.0, 1.0).astype(np.float32, copy=False)
 
 
 def _compute_roughness(gray: np.ndarray, params: dict) -> np.ndarray:
@@ -304,23 +300,30 @@ def _compute_normal(h_map: np.ndarray, gray: np.ndarray,
     return normal_u16
 
 
-def _compute_ao(h_map: np.ndarray, normal: np.ndarray,
-                params: dict) -> np.ndarray:
-    """Compute AO map (float32 [0,1])."""
-    ai = params.get("ao_intensity", 0.5)
-    aspread = params.get("ao_spread", 0.3)
-    ainvert = params.get("ao_invert", False)
-    # Use the processed height field and multi-scale crevice analysis.
-    radius = int(round(4.0 + aspread * 28.0))
-    result = generate_ao_map(
-        h_map,
-        normal_map=normal,
-        radius=radius,
-        strength=ai,
-        contrast=1.0,
-        output_float=True,
-    )
-    if ainvert:
+def _compute_ao(gray: np.ndarray, params: dict) -> np.ndarray:
+    """Compute AO map (float32 [0,1]).
+
+    Matches the NormalMap-Online reference AO panel exactly
+    (cpetry.github.io/NormalMap-Online): pixels within "Range" of "Mean"
+    height stay lit; pixels further away darken toward "Strength".
+    Blur/Sharp (range [-32, 32]) blurs the result when negative or
+    unsharp-mask sharpens it when positive; Invert flips the result.
+    Operates on the raw height field, independent of the
+    Displacement/Normal outputs, so it always reflects the current source.
+    """
+    strength = params.get("ao_strength", 0.5)
+    mean = params.get("ao_mean", 1.0)
+    ao_range = max(params.get("ao_range", 1.0), 1e-4)  # avoid div-by-zero
+    blur_sharp = params.get("ao_blur_sharp", 0.0)
+    invert = params.get("ao_invert", False)
+
+    perc_dist_to_mean = (ao_range - np.abs(gray - mean)) / ao_range
+    result = np.where(perc_dist_to_mean > 0.0, np.sqrt(np.clip(perc_dist_to_mean, 0.0, None)), 0.0)
+    result = result + (1.0 - result) * (1.0 - strength)
+
+    result = _apply_blur_sharp(result, blur_sharp)
+
+    if invert:
         result = 1.0 - result
     return np.clip(result, 0.0, 1.0).astype(np.float32, copy=False)
 
@@ -388,27 +391,30 @@ class NormalGenerator:
         gray = gray.astype(np.float32)
 
         # ── Phase 1: parallel independent maps ──────────────────────
+        # Displacement, Roughness and AO each depend only on the height-
+        # source grayscale, not on one another, so they can run concurrently.
         t1 = time.perf_counter()
         fut_disp = _PBR_EXECUTOR.submit(_compute_displacement, gray, params)
         fut_rough = _PBR_EXECUTOR.submit(_compute_roughness, gray, params)
+        fut_ao = _PBR_EXECUTOR.submit(_compute_ao, gray, params)
 
         disp_f = fut_disp.result()
         rough_f = fut_rough.result()
+        ao_f = fut_ao.result()
 
         phase1_ms = (time.perf_counter() - t1) * 1000.0
         logger.debug("PBR phase 1 (parallel): %.1f ms", phase1_ms)
 
-        # ── Phase 2: normal + AO (depend on height) ─────────────────
-        t2 = time.perf_counter()
+        # ── Phase 2: normal ──────────────────────────────────────────
         # Normals should describe the source height field directly.  Using
         # the separately stylized displacement map here compounds blur and
         # gradient detail, which is the main cause of soft, oversaturated
         # normals.  Displacement remains available as its own output map.
+        t2 = time.perf_counter()
         normal_img = _compute_normal(gray, gray, params, alpha=alpha_channel)
-        ao_f = _compute_ao(disp_f, normal_img, params)
 
         phase2_ms = (time.perf_counter() - t2) * 1000.0
-        logger.debug("PBR phase 2 (normal+AO): %.1f ms", phase2_ms)
+        logger.debug("PBR phase 2 (normal): %.1f ms", phase2_ms)
 
         # ── Remaining maps (sequential — cheap) ─────────────────────
         # Opacity

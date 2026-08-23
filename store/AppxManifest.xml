@@ -7,7 +7,7 @@
 
   <Identity
     Name="SeamsStudio.SeamlessTextureMaker"
-    Version="3.0.0.0"
+    Version="3.2.0.0"
     Publisher="CN=Seams Studio, O=Seams Studio, C=US"
     ProcessorArchitecture="x64" />
 

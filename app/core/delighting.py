@@ -41,9 +41,15 @@ def delight_image(image: np.ndarray, strength: float = 0.5,
     """
     assert_float32(image, "delight_image input")
 
-    # Early out if nothing to do
+    # Early out if nothing to do. Every slider must be checked here — a
+    # slider whose effect block lives further down (contrast_recovery,
+    # detail_preservation, color_preservation, edge_consistency) still needs
+    # to reach that code, otherwise it silently does nothing when adjusted
+    # on its own.
     has_work = (strength > 0.01 or flatness > 0.01 or shadow_removal > 0.01
-                or highlight_reduction > 0.01 or ao_removal > 0.01)
+                or highlight_reduction > 0.01 or ao_removal > 0.01
+                or contrast_recovery > 0.01 or detail_preservation > 0.01
+                or color_preservation > 0.01 or edge_consistency > 0.01)
     if not has_work:
         return image.copy()
 
@@ -88,22 +94,22 @@ def delight_image(image: np.ndarray, strength: float = 0.5,
         # Divide out the low-frequency lighting and re-center at mean
         delighted_l = (l / low_freq) * mean_l
 
-        # Detail preservation: blend between fully delighted and original
-        # based on high-frequency content
-        if detail_preservation > 0.01:
-            # Extract high-frequency detail layer
-            sigma_detail = max(h, w) * 0.02
-            sigma_detail = np.clip(sigma_detail, 2, 50)
-            k_detail = int(sigma_detail * 3) | 1
-            smoothed = cv2.GaussianBlur(l, (k_detail, k_detail), sigma_detail)
-            detail_layer = l - smoothed
-
-            # Boost detail in the delighted result
-            detail_boost = 1.0 + detail_preservation * 0.5
-            delighted_l = delighted_l + detail_layer * detail_boost * delight_str
-
         # Blend original ↔ delighted
         l = l * (1.0 - delight_str) + delighted_l * delight_str
+        l = np.clip(l, 0, 255)
+
+    # ── 1b. Detail preservation ──────────────────────────────────────
+    # Independent of step 1: unlike the multi-scale removal above, this
+    # boosts local contrast on whatever "l" currently is, so it has a
+    # visible effect on its own instead of silently doing nothing unless
+    # Shadow/Highlight/AO Removal also happen to be raised.
+    if detail_preservation > 0.01:
+        sigma_detail = max(h, w) * 0.02
+        sigma_detail = np.clip(sigma_detail, 2, 50)
+        k_detail = int(sigma_detail * 3) | 1
+        smoothed = cv2.GaussianBlur(l, (k_detail, k_detail), sigma_detail)
+        detail_layer = l - smoothed
+        l = l + detail_layer * (detail_preservation * 0.6)
         l = np.clip(l, 0, 255)
 
     # ── 2. Shadow removal ────────────────────────────────────────────

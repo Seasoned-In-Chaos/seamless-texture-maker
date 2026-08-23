@@ -255,8 +255,9 @@ class PreprocessingPanel(PanelShell):
 
         insight = PluginCard("Light Field Analysis", "Balance shadows while preserving usable surface grain.")
         insight.body.addWidget(MiniGraph("#31e6bd"))
-        chips = ChipRow(["Soft", "Balanced", "Aggressive"], "Balanced")
-        insight.body.addWidget(chips)
+        self.preset_chips = ChipRow(["Soft", "Balanced", "Aggressive"], "Balanced")
+        self.preset_chips.changed.connect(self._on_preset_changed)
+        insight.body.addWidget(self.preset_chips)
         self.layout.addWidget(insight)
 
         adjust = PluginCard("Adjustments", "Live parameters feed the viewport preview.")
@@ -276,6 +277,9 @@ class PreprocessingPanel(PanelShell):
             slider.sliderMoved.connect(self.livePreviewRequested.emit)
             self._sliders[key] = slider
             adjust.body.addWidget(slider)
+        self.reset_btn = QPushButton("Reset to Default")
+        self.reset_btn.clicked.connect(self._on_reset)
+        adjust.body.addWidget(self.reset_btn)
         self.layout.addWidget(adjust)
 
         output = PluginCard("Output Intent", "Texture-space flattening settings.")
@@ -303,10 +307,44 @@ class PreprocessingPanel(PanelShell):
         layout.addWidget(combo)
         return row
 
+    # Each preset is a coherent look (gentle touch-up vs. heavy correction)
+    # rather than a nudge of one slider. Color Preservation runs inversely
+    # to the rest: the more aggressively lighting is corrected, the less
+    # sense it makes to also pull color back toward the (badly lit) original.
+    DELIGHT_PRESETS = {
+        "Soft": {
+            "shadow": 20, "highlight": 15, "contrast": 10, "detail": 25,
+            "color": 70, "flatness": 10, "ao": 15, "edge": 20,
+        },
+        "Balanced": {
+            "shadow": 45, "highlight": 35, "contrast": 20, "detail": 35,
+            "color": 40, "flatness": 25, "ao": 35, "edge": 25,
+        },
+        "Aggressive": {
+            "shadow": 75, "highlight": 60, "contrast": 35, "detail": 45,
+            "color": 15, "flatness": 50, "ao": 65, "edge": 35,
+        },
+    }
+
+    def _on_preset_changed(self, name):
+        preset = self.DELIGHT_PRESETS.get(name)
+        if not preset:
+            return
+        for key, value in preset.items():
+            slider = self._sliders[key]
+            slider.blockSignals(True)
+            slider.setValue(value)
+            slider.blockSignals(False)
+        self.parametersChanged.emit()
+        self.livePreviewRequested.emit()
+
     def _on_reset(self):
         for slider in self._sliders.values():
+            slider.blockSignals(True)
             slider.setValue(0)
+            slider.blockSignals(False)
         self.parametersChanged.emit()
+        self.livePreviewRequested.emit()
 
     def get_parameters(self):
         shadow = self._sliders["shadow"].value() / 100.0
@@ -348,10 +386,10 @@ class ControlPanel(PanelShell):
 
         method = PluginCard("Technique", "Choose the synthesis behavior for this material.")
         self.method_combo = QComboBox()
-        self.method_combo.addItem("Overlap Blend", "overlap")
-        self.method_combo.addItem("Splat Synthesis", "splat")
         self.method_combo.addItem("Offset + Cross-Fade (Standard)", "offset_crossfade")
         self.method_combo.addItem("Mirror Tiling (2×2)", "mirror")
+        self.method_combo.addItem("Overlap Blend", "overlap")
+        self.method_combo.addItem("Splat Synthesis", "splat")
         self.method_combo.currentIndexChanged.connect(self._on_method_changed)
         method.body.addWidget(self.method_combo)
         self.method_hint = QLabel()
@@ -389,6 +427,17 @@ class ControlPanel(PanelShell):
             slider.sliderMoved.connect(self._on_live_update)
             self.splat_card.body.addWidget(slider)
         self.layout.addWidget(self.splat_card)
+
+        self.crossfade_card = PluginCard("Cross-Fade Controls", "Width of the linear feather blended across each center seam.")
+        # Matches SeamlessProcessor._process_offset_crossfade's own floor:
+        # the core clamps blend_strength to >=0.1, so below ~10% the seam
+        # feather stops shrinking any further.
+        self.crossfade_strength = LabeledSlider("Fade Amount", 0, 100, 50, "%")
+        self.crossfade_strength.valueChanged.connect(self._on_param_changed)
+        self.crossfade_strength.sliderMoved.connect(self._on_live_update)
+        self.crossfade_card.body.addWidget(self.crossfade_strength)
+        self.layout.addWidget(self.crossfade_card)
+
         self._on_method_changed(self.method_combo.currentIndex())
         self.current_random_seed = 0
 
@@ -482,8 +531,10 @@ class ControlPanel(PanelShell):
         method = self.method_combo.currentData()
         is_splat = method == "splat"
         is_overlap = method == "overlap"
+        is_crossfade = method == "offset_crossfade"
         self.overlap_card.setVisible(is_overlap)
         self.splat_card.setVisible(is_splat)
+        self.crossfade_card.setVisible(is_crossfade)
         hints = {
             "offset_crossfade": "Shifts the source by 50% and linearly cross-fades the center seams.",
             "mirror": "Builds a 2×2 reflected tile with exact matching outer edges.",
@@ -513,6 +564,7 @@ class ControlPanel(PanelShell):
             "splat_random_rotation": self.splat_rand_rot.value() / 100.0,
             "splat_wobble": self.splat_wobble.value() / 100.0,
             "splat_randomize": self.current_random_seed,
+            "blend_strength": self.crossfade_strength.value() / 100.0,
         }
 
     def set_parameters(self, params):
@@ -549,6 +601,8 @@ class ControlPanel(PanelShell):
             self.splat_wobble.setValue(float(params["splat_wobble"]) * 100.0)
         if "splat_randomize" in params:
             self.current_random_seed = int(params["splat_randomize"])
+        if "blend_strength" in params:
+            self.crossfade_strength.setValue(float(params["blend_strength"]) * 100.0)
 
     def get_export_format(self):
         return self.format_combo.currentText().lower()

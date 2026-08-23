@@ -16,15 +16,15 @@ from PyQt6.QtGui import (
 )
 
 
-class WarmupThread(QThread):
+class PrecompileThread(QThread):
     """Background thread that pre-compiles all Numba JIT functions.
 
-    Emits ``warmup_done(int)`` with the total elapsed milliseconds
+    Emits ``precompile_done(int)`` with the total elapsed milliseconds
     when finished.  The splash screen does NOT wait for this thread
     to close — compilation happens invisibly during the animation.
     """
 
-    warmup_done = pyqtSignal(int)
+    precompile_done = pyqtSignal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -32,14 +32,14 @@ class WarmupThread(QThread):
 
     def run(self) -> None:
         try:
-            from ..core.warmup import warmup_all_jit_functions
-            timings = warmup_all_jit_functions()
+            from ..core.seamless import precompile_jit_functions
+            timings = precompile_jit_functions()
             self._total_ms = int(sum(timings.values()))
         except Exception as exc:
             import logging
-            logging.getLogger("seams.splash").warning("JIT warmup failed: %s", exc)
+            logging.getLogger("seams.splash").warning("JIT precompile failed: %s", exc)
             self._total_ms = -1
-        self.warmup_done.emit(self._total_ms)
+        self.precompile_done.emit(self._total_ms)
 
 
 class Particle:
@@ -143,18 +143,18 @@ class SplashScreen(QWidget):
         self._timer.timeout.connect(self._step)
         self._timer.start()
 
-        # JIT warmup thread — compiles Numba functions in background
-        self._warmup_thread = WarmupThread(self)
-        self._warmup_thread.warmup_done.connect(self._on_warmup_done)
-        self._warmup_thread.start()
+        # JIT precompile thread — compiles Numba functions in background
+        self._precompile_thread = PrecompileThread(self)
+        self._precompile_thread.precompile_done.connect(self._on_precompile_done)
+        self._precompile_thread.start()
 
-    def _on_warmup_done(self, ms: int) -> None:
+    def _on_precompile_done(self, ms: int) -> None:
         import logging
         logger = logging.getLogger("seams.splash")
         if ms >= 0:
-            logger.info("JIT warmup completed in %d ms", ms)
+            logger.info("JIT precompile completed in %d ms", ms)
         else:
-            logger.warning("JIT warmup failed")
+            logger.warning("JIT precompile failed")
 
     def _step(self):
         dt = 0.016

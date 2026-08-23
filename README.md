@@ -2,7 +2,7 @@
 
 A powerful, GPU-accelerated desktop application for creating perfectly seamless textures and PBR materials for 3D workflows. Built with Python, PyQt6, OpenCV with CUDA support, and a Rust extension module.
 
-![Version](https://img.shields.io/badge/version-3.0.0-blue)
+![Version](https://img.shields.io/badge/version-3.2.0-blue)
 ![Python](https://img.shields.io/badge/python-3.11%2B-green)
 ![License](https://img.shields.io/badge/license-MIT-orange)
 ![Platform](https://img.shields.io/badge/platform-Windows-blue)
@@ -113,8 +113,7 @@ seamless-texture-maker/
 │   ├── core/                    # Processing algorithms
 │   │   ├── seamless.py          # Main seamless processor
 │   │   ├── delighting.py        # Delighting algorithm
-│   │   ├── normal_generator.py  # PBR map generation
-│   │   ├── ao_generator.py      # Ambient occlusion generation
+│   │   ├── normal_generator.py  # PBR map generation (Normal, Roughness, AO, Displacement, Opacity)
 │   │   ├── edge_blending.py     # Edge blending (Python)
 │   │   ├── edge_blending_jit.py # Edge blending (Numba JIT)
 │   │   ├── inpainting.py        # Inpainting algorithm
@@ -133,7 +132,6 @@ seamless-texture-maker/
 │   │   ├── splash_screen.py     # Splash screen
 │   │   ├── controls.py          # Main controls panel
 │   │   ├── normal_controls.py   # Normal map controls
-│   │   ├── export_dialog.py     # Export dialog
 │   │   ├── credits_dialog.py    # Credits dialog
 │   │   ├── system_monitor.py    # System resource monitor
 │   │   └── styles.py            # Premium dark theme

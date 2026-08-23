@@ -5,14 +5,13 @@ from __future__ import annotations
 import os
 
 from PyQt6.QtCore import QRect, QRectF, QSize, Qt, QUrl
-from PyQt6.QtGui import QDesktopServices, QGuiApplication, QPainter, QPixmap, QFont, QColor, QPen
-from PyQt6.QtWidgets import QDialog, QPushButton, QWidget, QHBoxLayout, QLabel, QVBoxLayout
+from PyQt6.QtGui import QDesktopServices, QGuiApplication, QPainter, QPixmap
+from PyQt6.QtWidgets import QDialog, QPushButton, QWidget
 
 
-POSTER_SIZE = QSize(1536, 1024)
-STUDIO_URL = "https://studiotrivima.in"
 LINKEDIN_URL = "https://linkedin.com/in/shubham-panchasara-4416b023a"
 INSTAGRAM_URL = "https://instagram.com/panchasarashubham"
+EMAIL_ADDRESS = "spanchasara1@gmail.com"
 
 
 def _resource(path: str) -> str:
@@ -21,19 +20,23 @@ def _resource(path: str) -> str:
 
 
 class _CreditsPoster(QWidget):
+    # Fallback canvas size only used if the artwork fails to load.
+    _FALLBACK_SIZE = QSize(2048, 2048)
+
     def __init__(self, parent: QDialog):
         super().__init__(parent)
         self._pixmap = QPixmap(_resource("credits_page.png"))
-        self._image_size = self._pixmap.size() if not self._pixmap.isNull() else POSTER_SIZE
+        self._image_size = self._pixmap.size() if not self._pixmap.isNull() else self._FALLBACK_SIZE
         self._buttons: list[tuple[QPushButton, QRect]] = []
         self.setAutoFillBackground(False)
 
-        self._add_hotspot(QRect(1455, 27, 36, 42), parent.accept)
-        self._add_hotspot(QRect(833, 545, 655, 206), lambda: self._open(STUDIO_URL))
-        self._add_hotspot(QRect(1048, 455, 352, 31), lambda: self._open(LINKEDIN_URL))
-        self._add_hotspot(QRect(1048, 490, 320, 31), lambda: self._open(INSTAGRAM_URL))
-        self._add_hotspot(QRect(1092, 824, 360, 31), lambda: self._open(LINKEDIN_URL))
-        self._add_hotspot(QRect(1092, 860, 320, 31), lambda: self._open(INSTAGRAM_URL))
+        # Hotspot rects are pixel coordinates in the 2048x2048 artwork's own
+        # space (see the "LinkedIn / Instagram / Email" row near the
+        # bottom of the "Developed By" section); resizeEvent below scales
+        # them to wherever the poster is actually drawn on screen.
+        self._add_hotspot(QRect(693, 1416, 217, 88), lambda: self._open(LINKEDIN_URL))
+        self._add_hotspot(QRect(1030, 1416, 230, 88), lambda: self._open(INSTAGRAM_URL))
+        self._add_hotspot(QRect(1355, 1416, 179, 88), lambda: self._open(f"mailto:{EMAIL_ADDRESS}"))
 
 
     def sizeHint(self) -> QSize:  # noqa: N802
@@ -91,8 +94,34 @@ class _CreditsPoster(QWidget):
         QDesktopServices.openUrl(QUrl(url))
 
 
-def show_credits(parent, app_version="3.0.0"):
-    del app_version
+def _make_close_button(dialog: QDialog) -> QPushButton:
+    """A Qt-drawn close control, independent of whatever the artwork does
+    or doesn't include -- the poster image has no baked-in close icon, so
+    this is the only way to close the dialog other than pressing Escape."""
+    btn = QPushButton("✕", dialog)
+    btn.setFixedSize(34, 34)
+    btn.setCursor(Qt.CursorShape.PointingHandCursor)
+    btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+    btn.setStyleSheet(
+        "QPushButton {"
+        "  background: rgba(10, 10, 16, 200);"
+        "  color: #b9a8ff;"
+        "  border: 1px solid rgba(143, 112, 255, 120);"
+        "  border-radius: 17px;"
+        "  font-size: 14px;"
+        "}"
+        "QPushButton:hover {"
+        "  background: rgba(143, 112, 255, 70);"
+        "  color: #ffffff;"
+        "  border-color: #8f70ff;"
+        "}"
+    )
+    btn.clicked.connect(dialog.accept)
+    return btn
+
+
+def show_credits(parent, app_version=None):
+    del app_version  # the version is baked into the poster artwork itself
 
     dialog = QDialog(parent)
     dialog.setWindowTitle("Credits")
@@ -100,13 +129,37 @@ def show_credits(parent, app_version="3.0.0"):
     dialog.setModal(True)
     dialog.setStyleSheet("QDialog { background: #000000; }")
 
-    available = QGuiApplication.primaryScreen().availableGeometry()
-    scale = min(1.0, (available.width() - 24) / POSTER_SIZE.width(), (available.height() - 24) / POSTER_SIZE.height())
-    dialog_size = QSize(round(POSTER_SIZE.width() * scale), round(POSTER_SIZE.height() * scale))
+    poster = _CreditsPoster(dialog)
+
+    # Size the dialog from the actual artwork's own dimensions rather than a
+    # hardcoded constant, so it always fits correctly no matter what shape
+    # the poster image is. And size it relative to the main window's
+    # current size (not the whole screen) so it reads as a proportionate
+    # overlay on the app rather than a near-fullscreen window of its own --
+    # this also means it naturally tracks whatever size the main window
+    # happens to be resized to before Credits is opened.
+    image_size = poster._image_size
+    if parent is not None:
+        host = parent.geometry()
+    else:
+        host = QGuiApplication.primaryScreen().availableGeometry()
+    max_w = max(360, int(host.width() * 0.82))
+    max_h = max(360, int(host.height() * 0.82))
+    scale = min(1.0, max_w / image_size.width(), max_h / image_size.height())
+    dialog_size = QSize(round(image_size.width() * scale), round(image_size.height() * scale))
     dialog.setFixedSize(dialog_size)
 
-    poster = _CreditsPoster(dialog)
+    if parent is not None:
+        dialog.move(
+            host.x() + (host.width() - dialog_size.width()) // 2,
+            host.y() + (host.height() - dialog_size.height()) // 2,
+        )
+
     poster.setGeometry(dialog.rect())
     poster.show()
+
+    close_btn = _make_close_button(dialog)
+    close_btn.move(dialog_size.width() - close_btn.width() - 12, 12)
+    close_btn.raise_()
 
     dialog.exec()

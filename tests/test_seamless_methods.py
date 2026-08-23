@@ -66,6 +66,38 @@ def test_mirror_tiling_builds_exact_2_by_2_reflection():
     np.testing.assert_array_equal(result[0, :], result[-1, :])
 
 
+def test_overlap_accepts_uint8_material_channels():
+    image = _source(dtype=np.uint8)
+    processor = SeamlessProcessor()
+    processor.load_image(image)
+
+    result = processor.process(
+        params={"method": "overlap"},
+        use_cache=False,
+        chunked=False,
+    )
+
+    assert result.dtype == np.uint8
+    assert result.shape == image.shape
+    assert int(result.min()) >= 0 and int(result.max()) <= 255
+
+
+def test_splat_accepts_uint8_material_channels():
+    image = _source(dtype=np.uint8)
+    processor = SeamlessProcessor()
+    processor.load_image(image)
+
+    result = processor.process(
+        params={"method": "splat"},
+        use_cache=False,
+        chunked=False,
+    )
+
+    assert result.dtype == np.uint8
+    assert result.shape == image.shape
+    assert int(result.min()) >= 0 and int(result.max()) <= 255
+
+
 def _seam_to_interior_ratio(result):
     """How different the wrap-adjacent border is vs. typical neighbouring
     pixels. ~1.0 means the seam reads the same as ordinary local detail;

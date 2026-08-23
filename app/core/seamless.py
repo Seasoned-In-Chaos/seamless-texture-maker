@@ -159,26 +159,32 @@ class SeamlessProcessor:
                 chunked: bool = True):
         """
         Process the image to create a seamless texture with caching.
-        
+
         Args:
             image: Optional input image. If None, uses previously loaded image.
             preview (bool): If True, process at lower resolution for speed.
-            params (dict): Optional parameter overrides.
+            params (dict): Optional parameter overrides. A ``delight_only``
+                key (bool) returns the delighted image before the seamless
+                method runs, so the Delight step's live preview matches what
+                "Apply Delight" actually commits instead of being obscured
+                by tiling/blend artifacts from the seamless method.
             use_cache (bool): If True, check/store result in cache (default True).
             chunked (bool): If True, auto-select chunked path for large images.
-        
+
         Returns:
             Processed seamless texture
         """
         if params:
             self.set_parameters(**params)
-            
+
+        delight_only = bool((params or {}).get('delight_only', False))
+
         if image is not None:
             self.load_image(image)
-        
+
         if self._original_image is None:
             raise ProcessingError("No image loaded. Call load_image() first.")
-        
+
         # Auto-select chunked path for large images
         h, w = self._original_image.shape[:2]
         if self.method == 'mirror' and max(h, w) > 4096:
@@ -191,11 +197,14 @@ class SeamlessProcessor:
         # at its four outer edges.  The offset cross-fade also needs one
         # global center seam.  Keep both methods on their full-image path.
         if (chunked and not preview and max(h, w) > 2048
-                and self.method not in {'mirror', 'offset_crossfade'}):
+                and self.method not in {'mirror', 'offset_crossfade'} and not delight_only):
             return self.run_pipeline_chunked(self._original_image, chunk_size=1024, overlap=64)
-        
-        # Check cache (both preview and full-res when use_cache is True)
-        if use_cache and self._image_hash:
+
+        # Check cache (both preview and full-res when use_cache is True).
+        # Skipped for delight_only requests: the cache key doesn't encode
+        # this flag, so a prior full-pipeline result could otherwise be
+        # returned in place of the plain delighted image (or vice versa).
+        if use_cache and self._image_hash and not delight_only:
             cache_key = make_pipeline_key(
                 self._preview_image if preview else self._original_image,
                 self._get_cache_params(),
@@ -203,7 +212,7 @@ class SeamlessProcessor:
             cached_result = self._cache.get_pipeline(cache_key)
             if cached_result is not None:
                 return cached_result
-        
+
         # Prepare source image
         if preview:
             if self._preview_image is None:
@@ -212,16 +221,26 @@ class SeamlessProcessor:
             img = self._preview_image.copy()
         else:
             img = self._original_image.copy()
-        
-        # Apply delighting/flattening
-        if self.preprocessing_params and any(v > 0 for v in self.preprocessing_params.values()):
+
+        # Apply delighting/flattening. Delight corrects baked lighting in a
+        # photographic Base Color image (always float32 in this pipeline);
+        # it has no meaning for a generated material channel like Normal
+        # (uint16) or Roughness/AO/Displacement/Opacity (uint8), and
+        # delight_image requires float32 input, so running a material
+        # channel through it here would raise instead of silently doing
+        # something meaningless.
+        if (img.dtype == np.float32 and self.preprocessing_params
+                and any(v > 0 for v in self.preprocessing_params.values())):
             delight_kwargs = self.preprocessing_params.copy()
             delight_kwargs["strength"] = delight_kwargs.pop("delight", 0.0)
             img = delight_image(img, **delight_kwargs)
-        
+
         # Store for UI display
         self._delighted_image = img.copy()
-        
+
+        if delight_only:
+            return img
+
         # Choose method
         if self.method == 'splat':
             result = self._process_splat(img)
@@ -264,18 +283,21 @@ class SeamlessProcessor:
             
     def _process_overlap(self, img):
         """Process using Overlap method."""
+        work, value_range = self._materialize_input(img)
         result = synthesis_overlap(
-            img,
+            work,
             overlap_x=self.overlap_x,
             overlap_y=self.overlap_y,
             falloff=self.edge_falloff
         )
+        result = self._materialize_output(result, img.dtype, value_range)
         self._processed_image = result
         return result
         
     def _process_splat(self, img):
         """Process using Splat method with patch caching."""
         h, w = img.shape[:2]
+        work, value_range = self._materialize_input(img)
 
         # KEY OPTIMIZATION: Cache rotated patches.
         # Only re-generate patches if appearance-affecting params change.
@@ -298,7 +320,7 @@ class SeamlessProcessor:
         cached_batches = self._splat_cache.get(cache_key)
 
         result, batches = synthesis_splat(
-            img,
+            work,
             new_size=(h, w),
             scale=self.splat_scale,
             rotation=self.splat_rotation,
@@ -320,8 +342,30 @@ class SeamlessProcessor:
                 except (StopIteration, RuntimeError):
                     pass
 
-        self._processed_image = result
-        return result
+        self._processed_image = self._materialize_output(result, img.dtype, value_range)
+        return self._processed_image
+
+    @staticmethod
+    def _materialize_input(image):
+        """Convert map data to the float32/0-255 contract of Materialize methods."""
+        if np.issubdtype(image.dtype, np.integer):
+            value_range = float(np.iinfo(image.dtype).max)
+        else:
+            observed = float(np.nanmax(image)) if image.size else 255.0
+            value_range = 1.0 if observed <= 1.0 else 255.0
+        work = image.astype(np.float32, copy=False)
+        if value_range != 255.0:
+            work = work * (255.0 / value_range)
+        return np.ascontiguousarray(work), value_range
+
+    @staticmethod
+    def _materialize_output(result, dtype, value_range):
+        restored = result.astype(np.float32, copy=False)
+        if value_range != 255.0:
+            restored = restored * (value_range / 255.0)
+        if np.issubdtype(dtype, np.integer):
+            restored = np.clip(restored, 0, np.iinfo(dtype).max)
+        return restored.astype(dtype, copy=False)
 
     def _process_standard(self, img):
         """Backward-compatible name for the offset cross-fade method."""
@@ -585,3 +629,80 @@ def make_seamless(image, blend_strength=0.5, seam_smoothness=0.5,
     )
     processor.load_image(image)
     return processor.process()
+
+
+def precompile_jit_functions():
+    """Trigger Numba compilation for all seamless method paths.
+
+    Runs on a background QThread (PrecompileThread in splash_screen.py)
+    while the splash animation plays, so the first user action is
+    stall-free. Each function is called once with a minimal 64x64 array.
+    Returns a dict mapping each component name to its elapsed compile
+    time in ms.
+    """
+    import logging
+    import time
+
+    logger = logging.getLogger("seams.precompile")
+    timings = {}
+
+    tiny_3ch = np.zeros((64, 64, 3), dtype=np.float32)
+    tiny_weights = np.zeros(8, dtype=np.float32)
+
+    # -- Overlap Blend JIT (edge blending) --------------------------------
+    try:
+        from .edge_blending_jit import (
+            blend_seam_horizontal_jit,
+            blend_seam_vertical_jit,
+            calculate_blend_weights,
+        )
+
+        t0 = time.perf_counter()
+        calculate_blend_weights(8, 0.5)
+        result_h = tiny_3ch.copy()
+        blend_seam_horizontal_jit(result_h, tiny_3ch, 32, 4, tiny_weights)
+        result_v = tiny_3ch.copy()
+        blend_seam_vertical_jit(result_v, tiny_3ch, 32, 4, tiny_weights)
+        timings["edge_blending_jit"] = (time.perf_counter() - t0) * 1000.0
+        logger.info("precompile edge_blending_jit: %.1f ms", timings["edge_blending_jit"])
+    except Exception as exc:
+        logger.warning("precompile edge_blending_jit failed: %s", exc)
+
+    # -- Splat Synthesis JIT ------------------------------------------------
+    try:
+        from .materialize_methods_jit import splat_accumulate_jit, splat_resolve_jit
+
+        patches = np.stack([tiny_3ch.copy()])
+        masks = np.ones((1, 64, 64), dtype=np.float32)
+        coords = np.array([[0, 0]], dtype=np.int32)
+        indices = np.array([0], dtype=np.int32)
+        accum = np.zeros((64, 64, 3), dtype=np.float32)
+        weight = np.zeros((64, 64), dtype=np.float32)
+
+        t0 = time.perf_counter()
+        splat_accumulate_jit(accum, weight, patches, masks, coords, indices)
+        splat_resolve_jit(accum, weight, tiny_3ch, np.empty_like(accum))
+        timings["splat_jit"] = (time.perf_counter() - t0) * 1000.0
+        logger.info("precompile splat_jit: %.1f ms", timings["splat_jit"])
+    except Exception as exc:
+        logger.warning("precompile splat_jit failed: %s", exc)
+
+    # -- Mirror Tiling (2x2) and Offset + Cross-Fade -----------------------
+    try:
+        tiny_img = np.zeros((64, 64, 3), dtype=np.uint8)
+        proc = SeamlessProcessor()
+        proc.load_image(tiny_img)
+
+        for method in ("mirror", "offset_crossfade"):
+            t0 = time.perf_counter()
+            proc.set_parameters(method=method)
+            proc.process(preview=True, use_cache=False)
+            timings[method] = (time.perf_counter() - t0) * 1000.0
+            logger.info("precompile %s: %.1f ms", method, timings[method])
+
+    except Exception as exc:
+        logger.warning("precompile seamless methods failed: %s", exc)
+
+    total_ms = sum(timings.values())
+    logger.info("precompile complete: %.1f ms total (%d components)", total_ms, len(timings))
+    return timings

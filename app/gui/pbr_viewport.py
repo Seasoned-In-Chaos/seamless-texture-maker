@@ -539,6 +539,20 @@ class PBRViewport(QOpenGLWidget):
         self.loadingChanged.emit(True)
         self.update()
 
+    def clear_material_map(self, name: str):
+        if name in self._pending_images:
+            del self._pending_images[name]
+        record = self._textures.pop(name, None)
+        if record is not None:
+            try:
+                if self.context() is not None and self.context().isValid():
+                    self.makeCurrent()
+                    record.texture.destroy()
+                    self.doneCurrent()
+            except Exception as exc:
+                log_exception(logger, "OpenGL texture cleanup failed", exc)
+        self.update()
+
     def set_channel_enabled(self, name: str, enabled: bool):
         if name in self._enabled:
             self._enabled[name] = enabled
