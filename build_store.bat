@@ -1,16 +1,20 @@
 @echo off
 setlocal enabledelayedexpansion
-echo ========================================
-echo  SEAMS v3.0 - Microsoft Store (MSIX) Build
-echo ========================================
-echo.
 
 :: ── Configuration ──────────────────────────────────────────────────────
 set "PY_VER=3.12"
 set "VENV_DIR=.venv-build"
 
+for /f "tokens=*" %%v in ('python -c "import sys; sys.path.insert(0, '.'); from app.utils.config import APP_VERSION; print(APP_VERSION)" 2^>nul') do set "APP_VER=%%v"
+if not defined APP_VER set "APP_VER=unknown"
+
+echo ========================================
+echo  SEAMS v%APP_VER% - Microsoft Store (MSIX) Build
+echo ========================================
+echo.
+
 :: ── Step 1: Find Python 3.12 ────────────────────────────────────────────
-echo [1/8] Finding Python %PY_VER%...
+echo [1/7] Finding Python %PY_VER%...
 set "PY312="
 
 py -%PY_VER% --version >nul 2>&1
@@ -29,7 +33,7 @@ echo [OK] Python 3.12: %PY312%
 echo.
 
 :: ── Step 2: Create / update build venv ──────────────────────────────────
-echo [2/8] Setting up build virtual environment...
+echo [2/7] Setting up build virtual environment...
 if not exist "%VENV_DIR%\Scripts\activate.bat" (
     "%PY312%" -m venv "%VENV_DIR%"
     if errorlevel 1 (
@@ -42,7 +46,7 @@ echo [OK] Venv activated: %VIRTUAL_ENV%
 echo.
 
 :: ── Step 3: Install dependencies ────────────────────────────────────────
-echo [3/8] Installing Python dependencies...
+echo [3/7] Installing Python dependencies...
 python -m pip install --quiet --upgrade pip
 python -m pip install --quiet -r requirements.txt
 python -m pip install --quiet pyinstaller packaging
@@ -50,7 +54,7 @@ echo [OK] Dependencies installed.
 echo.
 
 :: ── Step 4: Check Windows SDK (MakeAppx) ──────────────────────────────
-echo [4/8] Checking Windows SDK...
+echo [4/7] Checking Windows SDK...
 set "MAKEAPPX="
 set "SIGNTOOL="
 
@@ -69,30 +73,8 @@ if not defined MAKEAPPX (
 echo [OK] MakeAppx: %MAKEAPPX%
 echo.
 
-:: ── Step 5: Build Rust extension (optional) ────────────────────────────
-echo [5/8] Building Rust extension (optional)...
-where cargo >nul 2>&1
-if not errorlevel 1 (
-    set "PYO3_PYTHON=%VIRTUAL_ENV%\Scripts\python.exe"
-    cargo build --release --manifest-path seams_core\Cargo.toml
-    if not errorlevel 1 (
-        if exist "seams_core\target\release\seams_core.dll" (
-            copy /y "seams_core\target\release\seams_core.dll" "seams_core\target\release\seams_core.pyd" >nul
-            python -c "import shutil,pathlib;sp=pathlib.Path(r'%VIRTUAL_ENV%','Lib','site-packages');sp.mkdir(exist_ok=True);shutil.copy(r'seams_core/target/release/seams_core.pyd',sp/'seams_core.pyd');print('Installed seams_core.pyd')"
-            echo [OK] Rust extension built.
-        ) else (
-            echo [WARNING] seams_core.dll not found. Continuing with Numba JIT fallback.
-        )
-    ) else (
-        echo [WARNING] Rust build failed. Continuing with Numba JIT fallback.
-    )
-) else (
-    echo [SKIP] Cargo not found. Using Numba JIT fallback.
-)
-echo.
-
-:: ── Step 6: PyInstaller onedir build ────────────────────────────────────
-echo [6/8] Building onedir layout (for MSIX)...
+:: ── Step 5: PyInstaller onedir build ────────────────────────────────────
+echo [5/7] Building onedir layout (for MSIX)...
 if exist "dist\SEAMS" rmdir /s /q "dist\SEAMS"
 if exist "build" rmdir /s /q "build"
 
@@ -111,8 +93,8 @@ if errorlevel 1 (
 echo [OK] Onedir build complete: dist\SEAMS\
 echo.
 
-:: ── Step 7: Assemble MSIX package ──────────────────────────────────────
-echo [7/8] Assembling MSIX package...
+:: ── Step 6: Assemble MSIX package ──────────────────────────────────────
+echo [6/7] Assembling MSIX package...
 set "MSIX_STAGING=dist\SEAMS_MSIX"
 if exist "%MSIX_STAGING%" rmdir /s /q "%MSIX_STAGING%"
 mkdir "%MSIX_STAGING%\images"
@@ -128,8 +110,8 @@ if not exist "%MSIX_STAGING%\images\StoreLogo.png" (
 echo [OK] MSIX staging ready.
 echo.
 
-:: ── Step 8: Package & sign MSIX ────────────────────────────────────────
-echo [8/8] Packaging MSIX...
+:: ── Step 7: Package & sign MSIX ────────────────────────────────────────
+echo [7/7] Packaging MSIX...
 "%MAKEAPPX%" pack /d "%MSIX_STAGING%" /p "dist\SEAMS.msix" /v
 if errorlevel 1 (
     echo [ERROR] MSIX packaging failed!
@@ -138,7 +120,7 @@ if errorlevel 1 (
 )
 echo [OK] MSIX package created: dist\SEAMS.msix
 
-set "TEST_CERT_SUBJECT=CN=Seams Studio, O=Seams Studio, C=US"
+set "TEST_CERT_SUBJECT=CN=Shubham Panchasara, O=Shubham Panchasara, C=US"
 for /f "tokens=*" %%t in ('powershell -NoProfile -Command "try { (Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.Subject -eq '%TEST_CERT_SUBJECT%' } | Select-Object -First 1).Thumbprint } catch { '' }"') do set "CERT_THUMB=%%t"
 
 if defined CERT_THUMB (

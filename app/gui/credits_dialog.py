@@ -19,13 +19,29 @@ def _resource(path: str) -> str:
     return os.path.join(base, "resources", path)
 
 
+_credits_pixmap_cache: QPixmap | None = None
+
+
+def _load_credits_pixmap() -> QPixmap:
+    """Decode credits_page.png once and reuse it on every subsequent open.
+
+    Lazily populated (not at import time) since QPixmap needs a QApplication
+    to already exist; safe to share since nothing ever mutates the pixmap
+    after load.
+    """
+    global _credits_pixmap_cache
+    if _credits_pixmap_cache is None:
+        _credits_pixmap_cache = QPixmap(_resource("credits_page.png"))
+    return _credits_pixmap_cache
+
+
 class _CreditsPoster(QWidget):
     # Fallback canvas size only used if the artwork fails to load.
     _FALLBACK_SIZE = QSize(2048, 2048)
 
     def __init__(self, parent: QDialog):
         super().__init__(parent)
-        self._pixmap = QPixmap(_resource("credits_page.png"))
+        self._pixmap = _load_credits_pixmap()
         self._image_size = self._pixmap.size() if not self._pixmap.isNull() else self._FALLBACK_SIZE
         self._buttons: list[tuple[QPushButton, QRect]] = []
         self.setAutoFillBackground(False)
@@ -124,6 +140,7 @@ def show_credits(parent, app_version=None):
     del app_version  # the version is baked into the poster artwork itself
 
     dialog = QDialog(parent)
+    dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
     dialog.setWindowTitle("Credits")
     dialog.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
     dialog.setModal(True)

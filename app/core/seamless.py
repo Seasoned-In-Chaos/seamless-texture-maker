@@ -8,6 +8,17 @@ from .gpu_utils import is_cuda_available
 from .cache import ResultCache, hash_image, make_pipeline_key
 from .exceptions import ProcessingError, ImageLoadError
 
+# Chunked processing splits the image into tiles, each handled by a brand
+# new SeamlessProcessor with an empty cache -- for Splat in particular this
+# means the (expensive) rotated-patch bank gets rebuilt once per tile
+# instead of once total, which made chunking *slower* than a single pass
+# at exactly the sizes it was meant to help (measured: a 4000px image was
+# ~3-4x slower chunked than not, at the old 2048px threshold). A 4K image
+# is a trivial ~192MB as a single float32 array, so there's no real memory
+# pressure to guard against until well past that; only genuinely large
+# images (bigger than 4K, up to the 8192px import cap) still chunk.
+_CHUNK_THRESHOLD_PX = 4096
+
 class SeamlessProcessor:
     """
     Main processor for creating seamless textures.
@@ -196,9 +207,9 @@ class SeamlessProcessor:
         # source into independent chunks would destroy the exact reflection
         # at its four outer edges.  The offset cross-fade also needs one
         # global center seam.  Keep both methods on their full-image path.
-        if (chunked and not preview and max(h, w) > 2048
+        if (chunked and not preview and max(h, w) > _CHUNK_THRESHOLD_PX
                 and self.method not in {'mirror', 'offset_crossfade'} and not delight_only):
-            return self.run_pipeline_chunked(self._original_image, chunk_size=1024, overlap=64)
+            return self.run_pipeline_chunked(self._original_image, chunk_size=2048, overlap=64)
 
         # Check cache (both preview and full-res when use_cache is True).
         # Skipped for delight_only requests: the cache key doesn't encode
@@ -395,7 +406,18 @@ class SeamlessProcessor:
 
     @staticmethod
     def _linear_crossfade_center_seams(image, radius):
-        """Feather both center seam axes using symmetric linear weights."""
+        """Feather both center seam axes using symmetric linear weights.
+
+        Vectorized: every `distance` offset reads from the same pre-pass
+        snapshot and writes a disjoint pair of columns/rows (never revisited
+        by another offset), and both the left/top and right/bottom index
+        sets are contiguous ranges -- so each pass is two plain slices
+        (one reversed) instead of a per-offset Python loop or a fancy-index
+        gather/scatter (which turned out to erase most of the win at large
+        radius: advanced indexing on a non-contiguous index array costs
+        about as much as the loop it replaces). This was the single largest
+        CPU cost in the offset+cross-fade preview path.
+        """
         result = image.astype(np.float32, copy=True)
         h, w = image.shape[:2]
         cx, cy = w // 2, h // 2
@@ -403,27 +425,37 @@ class SeamlessProcessor:
 
         # At the seam the two sides are averaged equally.  The influence
         # decreases linearly to zero at the outer edge of the feather.
-        source = result.copy()
-        for distance in range(radius):
-            weight = 0.5 * (1.0 - (distance / radius))
-            left, right = cx - 1 - distance, cx + distance
-            if left >= 0 and right < w:
-                left_value = source[:, left].copy()
-                right_value = source[:, right].copy()
-                result[:, left] = left_value * (1.0 - weight) + right_value * weight
-                result[:, right] = right_value * (1.0 - weight) + left_value * weight
+        # (Matches the original bound: left = cx-1-distance >= 0 and
+        # right = cx+distance < w.)
+        n_h = max(0, min(radius, cx, w - cx))
+        if n_h > 0:
+            distance = np.arange(n_h)
+            weight = (0.5 * (1.0 - distance / radius)).astype(np.float32)
+            w_b = weight[np.newaxis, :, np.newaxis] if image.ndim == 3 else weight[np.newaxis, :]
+
+            # Left block reversed so index j means the same `distance=j` as
+            # the right block: position cx-1-j, i.e. closest-to-seam first.
+            left_values = result[:, cx - n_h:cx][:, ::-1]
+            right_values = result[:, cx:cx + n_h]
+            new_left = left_values * (1.0 - w_b) + right_values * w_b
+            new_right = right_values * (1.0 - w_b) + left_values * w_b
+            result[:, cx - n_h:cx] = new_left[:, ::-1]
+            result[:, cx:cx + n_h] = new_right
 
         # Keep the horizontal seam work while processing the vertical seam.
         # This makes the center crossing obey both equalized boundaries.
-        source = result.copy()
-        for distance in range(radius):
-            weight = 0.5 * (1.0 - (distance / radius))
-            top, bottom = cy - 1 - distance, cy + distance
-            if top >= 0 and bottom < h:
-                top_value = source[top, :].copy()
-                bottom_value = source[bottom, :].copy()
-                result[top, :] = top_value * (1.0 - weight) + bottom_value * weight
-                result[bottom, :] = bottom_value * (1.0 - weight) + top_value * weight
+        n_v = max(0, min(radius, cy, h - cy))
+        if n_v > 0:
+            distance = np.arange(n_v)
+            weight = (0.5 * (1.0 - distance / radius)).astype(np.float32)
+            w_b = weight[:, np.newaxis, np.newaxis] if image.ndim == 3 else weight[:, np.newaxis]
+
+            top_values = result[cy - n_v:cy, :][::-1, :]
+            bottom_values = result[cy:cy + n_v, :]
+            new_top = top_values * (1.0 - w_b) + bottom_values * w_b
+            new_bottom = bottom_values * (1.0 - w_b) + top_values * w_b
+            result[cy - n_v:cy, :] = new_top[::-1, :]
+            result[cy:cy + n_v, :] = new_bottom
 
         if np.issubdtype(image.dtype, np.integer):
             upper = np.iinfo(image.dtype).max
@@ -528,7 +560,7 @@ class SeamlessProcessor:
     def gpu_available(self):
         return self.use_gpu
 
-    def run_pipeline_chunked(self, img: 'np.ndarray', chunk_size: int = 1024,
+    def run_pipeline_chunked(self, img: 'np.ndarray', chunk_size: int = 2048,
                               overlap: int = 64, **kwargs) -> 'np.ndarray':
         """Process large images in overlapping tiles to avoid OOM.
 
@@ -537,15 +569,18 @@ class SeamlessProcessor:
         standard pipeline, then reassembles with linear gradient blending
         over the overlap zone.
 
-        Falls back to :meth:`process` directly for images <= 2048px.
+        Falls back to :meth:`process` directly for images at or below
+        _CHUNK_THRESHOLD_PX.
         """
         import logging
+        import os
         import time
+        from concurrent.futures import ThreadPoolExecutor
         logger = logging.getLogger("seams.chunked")
 
         h, w = img.shape[:2]
 
-        if max(h, w) <= 2048:
+        if max(h, w) <= _CHUNK_THRESHOLD_PX:
             return self.process(image=img, preview=False, chunked=False, **kwargs)
 
         t0 = time.perf_counter()
@@ -555,35 +590,104 @@ class SeamlessProcessor:
         # Compute tile positions
         tiles_y = list(range(0, h, chunk_size))
         tiles_x = list(range(0, w, chunk_size))
+        tile_positions = [(y0, x0) for y0 in tiles_y for x0 in tiles_x]
 
-        total_tiles = len(tiles_y) * len(tiles_x)
+        total_tiles = len(tile_positions)
         logger.info("Chunked processing: %dx%d → %d tiles (chunk=%d, overlap=%d)",
                      w, h, total_tiles, chunk_size, overlap)
 
-        tile_idx = 0
-        for y0 in tiles_y:
-            for x0 in tiles_x:
-                tile_idx += 1
-                y1 = min(y0 + chunk_size + overlap, h)
-                x1 = min(x0 + chunk_size + overlap, w)
-                # Also expand backwards for overlap
-                y_start = max(0, y0 - overlap)
-                x_start = max(0, x0 - overlap)
+        cache_params = self._get_cache_params()
 
-                tile = img[y_start:y1, x_start:x1].copy()
+        # SeamlessProcessor.load_image() rejects anything under 64px on
+        # either side. A remainder tile can end up smaller than that even
+        # with a reasonable chunk_size, depending on how the image
+        # dimensions happen to land relative to (chunk_size, overlap) --
+        # unreachable with this method's own default 2048/64 (its only
+        # real caller), but both are caller-supplied parameters, so nothing
+        # stops a future caller (or a test) from choosing a combination
+        # that hits it.
+        _MIN_TILE_PX = 64
 
-                t_tile = time.perf_counter()
-                tile_processor = SeamlessProcessor()
-                tile_processor.set_parameters(**self._get_cache_params())
-                tile_processor.load_image(tile)
-                processed = tile_processor.process(preview=False, chunked=False)
-                tile_ms = (time.perf_counter() - t_tile) * 1000.0
+        def _process_one_tile(y0, x0):
+            y1 = min(y0 + chunk_size + overlap, h)
+            x1 = min(x0 + chunk_size + overlap, w)
+            # Also expand backwards for overlap
+            y_start = max(0, y0 - overlap)
+            x_start = max(0, x0 - overlap)
+
+            # If that still leaves a tile under the minimum, pull the start
+            # back further first (trailing tiles); if that's not enough
+            # because we've hit 0 (the leading tile, where there's nothing
+            # to pull back into), push the end forward instead -- `h`/`w`
+            # are each >= 64 already (SeamlessProcessor's own load floor),
+            # so `min(h, 0 + _MIN_TILE_PX)` always succeeds. Track the
+            # actual resulting expansion in *_overlap: it can now exceed
+            # the nominal `overlap`, and the blend below has to fade across
+            # that actual width or the outer edge of the widened region
+            # would go unblended.
+            if y1 - y_start < _MIN_TILE_PX:
+                y_start = max(0, y1 - _MIN_TILE_PX)
+                if y1 - y_start < _MIN_TILE_PX:
+                    y1 = min(h, y_start + _MIN_TILE_PX)
+            if x1 - x_start < _MIN_TILE_PX:
+                x_start = max(0, x1 - _MIN_TILE_PX)
+                if x1 - x_start < _MIN_TILE_PX:
+                    x1 = min(w, x_start + _MIN_TILE_PX)
+            y_overlap = y0 - y_start
+            x_overlap = x0 - x_start
+
+            tile = img[y_start:y1, x_start:x1].copy()
+
+            t_tile = time.perf_counter()
+            tile_processor = SeamlessProcessor()
+            tile_processor.set_parameters(**cache_params)
+            tile_processor.load_image(tile)
+            processed = tile_processor.process(preview=False, chunked=False)
+            tile_ms = (time.perf_counter() - t_tile) * 1000.0
+            return (y_start, x_start, y1, x1, y_overlap, x_overlap, processed, tile_ms)
+
+        # Each tile runs the full seamless pipeline independently -- for
+        # Splat that includes rebuilding its rotated-patch bank from that
+        # tile's own crop, the single most expensive part of chunked
+        # processing. Every tile gets its own SeamlessProcessor with no
+        # shared mutable state, so this is safe to run concurrently; numpy/
+        # cv2/Numba release the GIL for the bulk of the work, so this is
+        # real parallelism, not just interleaving. Reassembly below still
+        # has to stay sequential -- each tile's overlap blend reads
+        # neighbours' already-written pixels -- but that pass is cheap
+        # numpy blending, not the expensive part, so parallelizing only the
+        # processing captures nearly all the available speedup.
+        max_workers = min(total_tiles, os.cpu_count() or 4)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit every tile up front so they all start concurrently,
+            # but consume results one at a time in submission (row-major)
+            # order -- reassembly depends on that order, since each tile's
+            # blend reads already-written neighbour data. Doing this inside
+            # the `with` block, rather than collecting `list(executor.map(
+            # ...))` before reassembly starts, lets an early-finishing
+            # tile's array be blended in and freed while later tiles are
+            # still computing, instead of holding every processed tile in
+            # memory simultaneously. That matters at the app's own size
+            # limits: at the 8192px import cap with the 2048/64 defaults,
+            # holding all 16 tiles at once adds ~900MB of transient float32
+            # data on top of `img` and `result`, right at the size
+            # threshold chunking exists to avoid OOM for.
+            futures = [executor.submit(_process_one_tile, y0, x0) for y0, x0 in tile_positions]
+
+            for tile_idx, future in enumerate(futures, start=1):
+                y_start, x_start, y1, x1, y_overlap, x_overlap, processed, tile_ms = future.result()
+                futures[tile_idx - 1] = None  # release this tile's result once consumed
                 logger.debug("  tile %d/%d: %dms", tile_idx, total_tiles, int(tile_ms))
 
-                # Compute blend weights for overlap regions
+                # Compute blend weights for overlap regions. Faded across
+                # this tile's *actual* backward expansion (y_overlap/
+                # x_overlap), which can exceed the nominal `overlap` if the
+                # _MIN_TILE_PX adjustment above widened it -- fading across
+                # only `overlap` pixels of a wider region would leave its
+                # outer edge unblended.
                 th, tw = processed.shape[:2]
-                fade_y = np.linspace(0, 1, min(overlap, th)).astype(np.float32)
-                fade_x = np.linspace(0, 1, min(overlap, tw)).astype(np.float32)
+                fade_y = np.linspace(0, 1, min(y_overlap, th)).astype(np.float32)
+                fade_x = np.linspace(0, 1, min(x_overlap, tw)).astype(np.float32)
 
                 if y_start > 0:
                     fade = fade_y[:, np.newaxis, np.newaxis] if img.ndim == 3 else fade_y[:, np.newaxis]
@@ -647,26 +751,6 @@ def precompile_jit_functions():
     timings = {}
 
     tiny_3ch = np.zeros((64, 64, 3), dtype=np.float32)
-    tiny_weights = np.zeros(8, dtype=np.float32)
-
-    # -- Overlap Blend JIT (edge blending) --------------------------------
-    try:
-        from .edge_blending_jit import (
-            blend_seam_horizontal_jit,
-            blend_seam_vertical_jit,
-            calculate_blend_weights,
-        )
-
-        t0 = time.perf_counter()
-        calculate_blend_weights(8, 0.5)
-        result_h = tiny_3ch.copy()
-        blend_seam_horizontal_jit(result_h, tiny_3ch, 32, 4, tiny_weights)
-        result_v = tiny_3ch.copy()
-        blend_seam_vertical_jit(result_v, tiny_3ch, 32, 4, tiny_weights)
-        timings["edge_blending_jit"] = (time.perf_counter() - t0) * 1000.0
-        logger.info("precompile edge_blending_jit: %.1f ms", timings["edge_blending_jit"])
-    except Exception as exc:
-        logger.warning("precompile edge_blending_jit failed: %s", exc)
 
     # -- Splat Synthesis JIT ------------------------------------------------
     try:

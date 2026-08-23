@@ -3,7 +3,7 @@ name: Build and Release SEAMS
 on:
   push:
     tags:
-      - 'v3.1*'
+      - 'v*'
   workflow_dispatch:
 
 permissions:
@@ -22,18 +22,6 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Install Rust stable (MSVC)
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-pc-windows-msvc
-
-      - name: Cache Cargo registry
-        uses: actions/cache@v4
-        with:
-          path: ~/.cargo/registry
-          key: cargo-${{ hashFiles('seams_core/Cargo.lock') }}
-          restore-keys: cargo-
-
       - name: Cache Python venv
         uses: actions/cache@v4
         with:
@@ -48,7 +36,7 @@ jobs:
           call .venv-build\Scripts\activate.bat
           python -m pip install --quiet --upgrade pip
           pip install --quiet -r requirements.txt
-          pip install --quiet maturin pyinstaller packaging
+          pip install --quiet pyinstaller packaging
 
       - name: Run automated tests
         shell: cmd
@@ -56,16 +44,6 @@ jobs:
           call .venv-build\Scripts\activate.bat
           pip install --quiet pytest
           python -m pytest -q
-
-      - name: Build Rust extension
-        shell: cmd
-        run: |
-          call .venv-build\Scripts\activate.bat
-          set PYO3_PYTHON=%VIRTUAL_ENV%\Scripts\python.exe
-          cd seams_core
-          maturin develop --release --strip
-          cd ..
-          python -c "from seams_core import edge_blend_symmetric; print('seams_core: VERIFIED OK')" 2>nul || echo [WARNING] seams_core not available, continuing with Numba fallback
 
       - name: Install UPX
         shell: pwsh

@@ -1,8 +1,10 @@
 """Tests for ResultCache and key generation."""
+import threading
+
 import numpy as np
 import pytest
 
-from app.core.cache import ResultCache, hash_image, make_pipeline_key, make_pbr_key
+from app.core.cache import ResultCache, hash_image, make_pipeline_key
 
 
 class TestResultCache:
@@ -44,16 +46,44 @@ class TestResultCache:
         key2 = make_pipeline_key(arr, {"method": "splat", "falloff": 0.5})
         assert key1 != key2
 
-    def test_make_pbr_key_stable(self):
-        arr = np.zeros((64, 64, 3), dtype=np.float32)
-        key1 = make_pbr_key(arr, {"normal_intensity": 0.5})
-        key2 = make_pbr_key(arr, {"normal_intensity": 0.5})
-        assert key1 == key2
-
-    def test_pbr_cache_roundtrip(self):
+    def test_pipeline_cache_roundtrip(self):
         cache = ResultCache(max_size=10)
-        maps = {"Normal": np.zeros((64, 64, 3), dtype=np.uint8)}
-        cache.set_pbr("test_key", maps)
-        result = cache.get_pbr("test_key")
+        arr = np.zeros((64, 64, 3), dtype=np.uint8)
+        cache.set_pipeline("test_key", arr)
+        result = cache.get_pipeline("test_key")
         assert result is not None
-        assert "Normal" in result
+        np.testing.assert_array_equal(result, arr)
+
+
+class TestResultCacheThreadSafety:
+    """ResultCache is hit concurrently in production: a background
+    MaterialMapThread recomputing a map races the GUI thread exporting a
+    not-yet-generated one, both against the same module-level PBR cache.
+    _touch()'s "if key in access_order: remove(key)" and _evict_to_fit()'s
+    eviction loop are check-then-act sequences that aren't atomic across
+    threads under the GIL's time-sliced switching without a lock."""
+
+    def test_concurrent_get_set_does_not_raise(self):
+        cache = ResultCache(max_size=8, max_bytes=10 * 1024 * 1024)
+        arr = np.zeros((32, 32, 3), dtype=np.float32)
+        errors = []
+
+        def worker(n):
+            try:
+                for i in range(200):
+                    key = f"k{(n * 200 + i) % 20}"
+                    cache.set_pipeline(key, arr)
+                    cache.get_pipeline(key)
+            except Exception as exc:  # noqa: BLE001
+                errors.append(exc)
+
+        threads = [threading.Thread(target=worker, args=(n,)) for n in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+
+        assert not errors, f"concurrent cache access raised: {errors}"
+        # Internal bookkeeping should still be self-consistent afterward.
+        assert len(cache.cache) == len(cache.access_order)
+        assert set(cache.cache.keys()) == set(cache.access_order)

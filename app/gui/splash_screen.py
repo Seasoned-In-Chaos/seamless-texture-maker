@@ -148,6 +148,23 @@ class SplashScreen(QWidget):
         self._precompile_thread.precompile_done.connect(self._on_precompile_done)
         self._precompile_thread.start()
 
+    def wait_for_precompile(self) -> None:
+        """Block for the JIT precompile thread if it's still running.
+
+        Call this before closing the splash screen. Without it, a cold-cache
+        first launch where precompile outlasts the ~4s splash animation lets
+        QApplication teardown destroy a still-running QThread when the app
+        quits shortly after -- Qt warns loudly about this and it's genuinely
+        unsafe. Deliberately unbounded rather than a fixed timeout: JIT
+        compilation can't be cancelled mid-flight, is pure CPU work with no
+        network/user-input dependency, and is guaranteed to finish -- a
+        fixed timeout just narrows the race instead of closing it (a
+        machine slow enough to still be compiling past the timeout doesn't
+        become safe to tear down just because we stopped waiting).
+        """
+        if self._precompile_thread.isRunning():
+            self._precompile_thread.wait()
+
     def _on_precompile_done(self, ms: int) -> None:
         import logging
         logger = logging.getLogger("seams.splash")

@@ -33,17 +33,14 @@ description: Common issues and how to fix them.
 
 ---
 
-## CUDA Not Detected
+## GPU Acceleration Isn't Active
 
-**Symptoms**: GPU acceleration not active, operations running on CPU only.
+**Symptoms**: Everything runs on CPU regardless of your hardware; the GPU status never shows as active.
 
-**Fix**:
-1. Install NVIDIA CUDA Toolkit
-2. Ensure `opencv-python` is built with CUDA support (the default `pip install` version may not include CUDA)
-3. Check the system monitor in the status bar — the GPU bar only appears if `nvidia-smi` is available
+This isn't a configuration problem to fix — it's a current limitation. SEAMS ships with `opencv-python-headless`, the standard PyPI build, which has no CUDA support compiled in at all, so `cv2.cuda` is unavailable on every install regardless of your GPU. CUDA-accelerated processing isn't wired into the pipeline in this version.
 
 <Note>
-SEAMS works fine without CUDA. CPU mode + Numba JIT is perfectly usable for textures up to 4K. CUDA provides 3–5× speedup for heavy operations.
+This doesn't affect image quality or correctness. CPU + Numba JIT handles textures up to 4K comfortably; the GPU indicator in the status bar reflects general system GPU utilization (via `nvidia-smi`), not SEAMS's own processing.
 </Note>
 
 ---

@@ -15,11 +15,11 @@ VSVersionInfo(
       StringTable(
         '040904B0',
         [
-        StringStruct('CompanyName', 'SEAMS Studio'),
+        StringStruct('CompanyName', 'Shubham Panchasara'),
         StringStruct('FileDescription', 'SEAMS Seamless Texture Studio'),
         StringStruct('FileVersion', '3.2.0'),
         StringStruct('InternalName', 'SeamlessTextureMaker'),
-        StringStruct('LegalCopyright', 'Copyright (c) 2024-2026 SEAMS Studio'),
+        StringStruct('LegalCopyright', 'Copyright (c) 2024-2026 Shubham Panchasara'),
         StringStruct('OriginalFilename', 'SEAMS.exe'),
         StringStruct('ProductName', 'SEAMS'),
         StringStruct('ProductVersion', '3.2.0')

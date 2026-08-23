@@ -1,55 +1,12 @@
 ---
-title: Corona Renderer
-description: Export PBR textures for Corona Renderer with glossiness conversion.
+title: Corona
+description: Exporting textures for use in Corona Renderer.
 ---
 
-# Corona Renderer Export
+# Corona Renderer
 
-SEAMS exports textures optimized for Chaos Corona with glossiness conversion and OpenGL normal convention. It writes texture maps only.
+SEAMS does not currently include a Corona-specific export preset. Export the individual maps from [PBR Export](/pages/export/pbr-export) and wire them into a CoronaPhysicalMtl in your 3ds Max or Cinema 4D scene.
 
-## Corona Default Settings
-
-| Setting | Value |
-|---|---|
-| Workflow | Roughness |
-| Normal Format | OpenGL (Y+) |
-| Format | PNG |
-| Bit Depth | 16-bit |
-| Output | Texture maps only |
-
-## Corona-Specific Options
-
-All options default to **enabled**:
-
-| Option | Description |
-|---|---|
-| Convert Roughness to Glossiness | Inverts roughness to produce glossiness map for CoronaPhysicalMtl |
-| Gamma-safe export | Ensures correct gamma handling for linear vs sRGB textures |
-| Use CoronaNormal compatibility | Normal map format compatible with CoronaNormal map |
-| Clamp displacement values | Clamps displacement to `[8, 247]` range to prevent artifacts |
-
-## Glossiness Conversion
-
-Corona's CoronaPhysicalMtl uses glossiness rather than roughness. When "Convert Roughness to Glossiness" is enabled:
-
-```
-glossiness = bitwise_not(roughness_gray)
-```
-
-This produces an inverted roughness map suitable for the Glossiness input.
-
-## File Naming
-
-```
-MaterialName_CORONA_BaseColor.png
-MaterialName_CORONA_Normal.png
-MaterialName_CORONA_Glossiness.png
-MaterialName_CORONA_AO.png
-MaterialName_CORONA_Displacement.png
-```
-
-## Tips for Corona
-
-- In 3ds Max, set BaseColor texture to **sRGB** gamma and all other maps to **Linear**
-- Use **CoronaNormal** map node for the normal map
-- Set displacement via **CoronaDisplacementMod** modifier on the geometry
+<Tip>
+Corona expects OpenGL-convention (Y+) normal maps — the default in Material Lab's Normal controls.
+</Tip>

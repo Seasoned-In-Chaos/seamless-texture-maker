@@ -1,23 +1,20 @@
 @echo off
 setlocal enabledelayedexpansion
-echo ========================================
-echo  SEAMS v3.0 - Production Build
-echo ========================================
-echo.
 
 :: ── Configuration ──────────────────────────────────────────────────────
 set "PY_VER=3.11+"
 set "VENV_DIR=.venv-build"
-set "MSVC_ROOT="
-set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
-if exist "%VSWHERE%" (
-    for /f "usebackq delims=" %%i in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "MSVC_ROOT=%%i\VC\Tools\MSVC"
-)
-if not defined MSVC_ROOT if exist "C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC" set "MSVC_ROOT=C:\Program Files\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC"
-if not defined MSVC_ROOT if exist "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC" set "MSVC_ROOT=C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC"
+
+for /f "tokens=*" %%v in ('python -c "import sys; sys.path.insert(0, '.'); from app.utils.config import APP_VERSION; print(APP_VERSION)" 2^>nul') do set "APP_VER=%%v"
+if not defined APP_VER set "APP_VER=unknown"
+
+echo ========================================
+echo  SEAMS v%APP_VER% - Production Build
+echo ========================================
+echo.
 
 :: ── Step 1: Find Python ────────────────────────────────────────────
-echo [1/8] Finding Python...
+echo [1/6] Finding Python...
 for /f "tokens=*" %%p in ('python -c "import sys; print(sys.executable)"') do set "PY_EXE=%%p"
 
 if not defined PY_EXE (
@@ -28,7 +25,7 @@ echo [OK] Python: %PY_EXE%
 echo.
 
 :: ── Step 2: Create / update build venv ──────────────────────────────────
-echo [2/8] Setting up build virtual environment...
+echo [2/6] Setting up build virtual environment...
 if not exist "%VENV_DIR%\Scripts\activate.bat" (
     "%PY_EXE%" -m venv "%VENV_DIR%"
     if errorlevel 1 (
@@ -41,57 +38,15 @@ echo [OK] Venv activated: %VIRTUAL_ENV%
 echo.
 
 :: ── Step 3: Install dependencies ────────────────────────────────────────
-echo [3/8] Installing Python dependencies...
+echo [3/6] Installing Python dependencies...
 python -m pip install --quiet --upgrade pip
 python -m pip install --quiet -r requirements.txt
-python -m pip install --quiet maturin pyinstaller packaging
+python -m pip install --quiet pyinstaller packaging
 echo [OK] Dependencies installed.
 echo.
 
-:: ── Step 4: Verify MSVC toolchain ──────────────────────────────────────
-echo [4/8] Verifying MSVC toolchain...
-set "LINK_FOUND=0"
-for /f "tokens=*" %%d in ('dir /b /ad /o-n "%MSVC_ROOT%" 2^>nul') do (
-    if exist "%MSVC_ROOT%\%%d\bin\Hostx64\x64\link.exe" (
-        set "LINK_FOUND=1"
-        set "MSVC_VER=%%d"
-    )
-)
-if "%LINK_FOUND%"=="0" (
-    echo [WARNING] MSVC link.exe not found! Skipping Rust build.
-    goto :skip_rust_install
-)
-echo [OK] MSVC %MSVC_VER% found.
-echo.
-
-:: ── Step 5: Build Rust extension ────────────────────────────────────────
-echo [5/8] Building Rust extension (seams_core)...
-
-set "PYO3_PYTHON=%VIRTUAL_ENV%\Scripts\python.exe"
-for /f "tokens=*" %%s in ('dir /b /ad /o-n "C:\Program Files (x86)\Windows Kits\10\Lib" 2^>nul') do set "SDK_VER=%%s"
-set "LIB=%MSVC_ROOT%\%MSVC_VER%\lib\x64;C:\Program Files (x86)\Windows Kits\10\Lib\%SDK_VER%\um\x64;C:\Program Files (x86)\Windows Kits\10\Lib\%SDK_VER%\ucrt\x64"
-set "INCLUDE=%MSVC_ROOT%\%MSVC_VER%\include"
-
-cargo build --release --manifest-path seams_core\Cargo.toml
-if errorlevel 1 (
-    echo [WARNING] Rust build failed. Continuing with Numba JIT fallback.
-    goto :skip_rust_install
-)
-
-if not exist "seams_core\target\release\seams_core.dll" (
-    echo [WARNING] seams_core.dll not found after build.
-    goto :skip_rust_install
-)
-
-copy /y "seams_core\target\release\seams_core.dll" "seams_core\target\release\seams_core.pyd" >nul
-python -c "import shutil,pathlib;sp=pathlib.Path(r'%VIRTUAL_ENV%','Lib','site-packages');sp.mkdir(exist_ok=True);shutil.copy(r'seams_core/target/release/seams_core.pyd',sp/'seams_core.pyd');print('Installed seams_core.pyd')"
-python -c "from seams_core import edge_blend_symmetric;print('  seams_core: VERIFIED OK')" 2>nul || echo [WARNING] seams_core import verification failed
-echo [OK] Rust extension built.
-:skip_rust_install
-echo.
-
-:: ── Step 6: PyInstaller ────────────────────────────────────────────────
-echo [6/8] Building SEAMS.exe with PyInstaller...
+:: ── Step 4: PyInstaller ────────────────────────────────────────────────
+echo [4/6] Building SEAMS.exe with PyInstaller...
 if exist "dist\SEAMS.exe" del /f "dist\SEAMS.exe"
 if exist "build" rmdir /s /q "build"
 
@@ -109,23 +64,24 @@ if errorlevel 1 (
 echo [OK] SEAMS.exe built: dist\SEAMS.exe
 echo.
 
-:: ── Step 7: Code sign (optional) ───────────────────────────────────────
-echo [7/8] Code signing...
+:: ── Step 5: Code sign (optional) ───────────────────────────────────────
+echo [5/6] Code signing...
 if not defined SIGN_PFX (
     echo [SKIP] Code signing skipped (SIGN_PFX not set^).
     goto :skip_sign
 )
 signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /a /f "%SIGN_PFX%" /p "%SIGN_PASS%" "dist\SEAMS.exe"
 if errorlevel 1 (
-    echo [WARNING] Code signing failed.
-) else (
-    echo [OK] EXE signed.
+    echo [ERROR] Code signing failed! A SIGN_PFX was configured, so an
+    echo         unsigned release build is not shipped silently.
+    exit /b 1
 )
+echo [OK] EXE signed.
 :skip_sign
 echo.
 
-:: ── Step 8: Inno Setup installer ────────────────────────────────────────
-echo [8/8] Building Windows installer...
+:: ── Step 6: Inno Setup installer ────────────────────────────────────────
+echo [6/6] Building Windows installer...
 set "ISCC_EXE="
 
 where iscc >nul 2>&1
@@ -152,6 +108,10 @@ if not defined SIGN_PFX goto :done
 echo [*] Signing installer...
 for %%f in (dist\SEAMS_Setup_*.exe) do (
     signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /a /f "%SIGN_PFX%" /p "%SIGN_PASS%" "%%f"
+    if errorlevel 1 (
+        echo [ERROR] Installer signing failed!
+        exit /b 1
+    )
 )
 
 :done
@@ -159,7 +119,7 @@ echo.
 echo ========================================
 echo  BUILD COMPLETE!
 echo  EXE:        dist\SEAMS.exe
-echo  Installer:  dist\SEAMS_Setup_3.0.0.exe
+echo  Installer:  dist\SEAMS_Setup_%APP_VER%.exe
 echo ========================================
 
 call deactivate

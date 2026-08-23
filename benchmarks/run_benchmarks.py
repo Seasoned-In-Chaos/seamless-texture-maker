@@ -28,17 +28,9 @@ SEED = 42
 N_RUNS = 5
 SIZE = 2048
 TARGETS = {
-    "edge_blend_numba": 12.0,
-    "edge_blend_rust": 5.0,
-    "splat_numba": 180.0,
-    "splat_rust": 100.0,
-    "gradients_numba": 80.0,
-    "gradients_rust": 10.0,
-    "inpaint_cpu": 150.0,
-    "pbr_sequential": 300.0,
+    "crossfade_seam_blend": 150.0,
     "pbr_parallel": 120.0,
     "cache_hit": 1.0,
-    "cache_miss": 50.0,
     "full_pipeline": 500.0,
 }
 
@@ -76,49 +68,15 @@ def main():
     img = _make_test_image()
     results = []
 
-    # Edge blend (NumPy vectorized)
-    def bench_edge_blend_numba():
-        from app.core.edge_blending import blend_seams
+    # Offset + Cross-Fade seam blend (vectorized) -- the active seam-feather
+    # path used by SeamlessProcessor for the offset_crossfade method.
+    def bench_crossfade_seam_blend():
+        from app.core.seamless import SeamlessProcessor
         offset = np.roll(np.roll(img, SIZE // 2, axis=0), SIZE // 2, axis=1)
-        blend_seams(offset, blend_strength=0.5, smoothness=0.5, symmetric=True)
+        radius = int(SIZE * 0.16 * 0.5)
+        SeamlessProcessor._linear_crossfade_center_seams(offset, radius)
 
-    results.append(_run_benchmark("edge_blend_numba", bench_edge_blend_numba))
-
-    # Edge blend (JIT)
-    def bench_edge_blend_jit():
-        from app.core.edge_blending_jit import blend_seams_fast
-        offset = np.roll(np.roll(img, SIZE // 2, axis=0), SIZE // 2, axis=1)
-        blend_seams_fast(offset, blend_strength=0.5, smoothness=0.5)
-
-    results.append(_run_benchmark("edge_blend_numba_jit", bench_edge_blend_jit))
-
-    # Edge blend (Rust)
-    try:
-        from seams_core import edge_blend_symmetric
-        def bench_edge_blend_rust():
-            offset = np.roll(np.roll(img, SIZE // 2, axis=0), SIZE // 2, axis=1)
-            edge_blend_symmetric(offset, 128, True)
-        results.append(_run_benchmark("edge_blend_rust", bench_edge_blend_rust))
-    except ImportError:
-        print("  [SKIP] Rust edge_blend not available")
-
-    # Gradients (Numba)
-    def bench_gradients_numba():
-        from app.core.normal_generator import compute_gradients_jit
-        gray = img[:, :, 0] / 255.0
-        compute_gradients_jit(gray.astype(np.float32), 2.5)
-
-    results.append(_run_benchmark("gradients_numba", bench_gradients_numba))
-
-    # Gradients (Rust)
-    try:
-        from seams_core import compute_gradients as rs_compute_gradients
-        def bench_gradients_rust():
-            gray = img[:, :, 0] / 255.0
-            rs_compute_gradients(gray.astype(np.float32), 2.5)
-        results.append(_run_benchmark("gradients_rust", bench_gradients_rust))
-    except ImportError:
-        print("  [SKIP] Rust gradients not available")
+    results.append(_run_benchmark("crossfade_seam_blend", bench_crossfade_seam_blend))
 
     # PBR parallel
     def bench_pbr_parallel():

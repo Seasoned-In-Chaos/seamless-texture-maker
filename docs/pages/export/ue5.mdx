@@ -1,53 +1,12 @@
 ---
 title: Unreal Engine 5
-description: Export PBR textures optimized for UE5 with ORM packing.
+description: Exporting textures for use in Unreal Engine 5.
 ---
 
-# Unreal Engine 5 Export
+# Unreal Engine 5
 
-SEAMS provides UE5-optimized export with ORM texture packing and DirectX normal format. It writes texture maps only.
-
-## UE5 Default Settings
-
-| Setting | Value |
-|---|---|
-| Workflow | Roughness |
-| Normal Format | DirectX (Y-) |
-| Format | PNG |
-| Bit Depth | 8-bit |
-| Output | Texture maps only |
-
-## UE5-Specific Options
-
-All options default to **enabled**:
-
-| Option | Description |
-|---|---|
-| ORM Texture Packing | Packs AO (R) + Roughness (G) with a zeroed B channel into a single texture |
-
-## ORM Packing
-
-When ORM packing is enabled, three maps are combined into a single RGB texture:
-
-| Channel | Map | Source |
-|---|---|---|
-| **R** | AO | Ambient Occlusion map |
-| **G** | Roughness | Roughness map |
-| **B** | Reserved | Always zero |
-
-This reduces texture memory from 3 separate textures to 1, which is the standard UE5 practice.
-
-## File Naming
-
-UE5 uses the `T_` prefix convention:
-
-```
-T_MaterialName_D.png      — Diffuse/BaseColor
-T_MaterialName_N.png      — Normal Map
-T_MaterialName_ORM.png   — Packed ORM
-T_MaterialName_Displacement.png — Displacement
-```
+SEAMS does not currently include a UE5-specific export preset or automatic ORM (AO/Roughness/Metallic) packing. Export the individual maps from [PBR Export](/pages/export/pbr-export) and pack/configure them in UE5's material editor.
 
 <Tip>
-For best results in UE5, import the ORM texture with sRGB disabled and compression set to "UserInterface2D (RGBA)". Set the BaseColor texture to sRGB enabled.
+UE5 expects DirectX-convention (Y-) normal maps. Set this in Material Lab's Normal controls before exporting the Normal map.
 </Tip>

@@ -52,11 +52,6 @@ hiddenimports += filtered_submodules('llvmlite')
 
 datas.append(('resources', 'resources'))
 
-rust_pyd = spec_dir / 'seams_core' / 'target' / 'release'
-if rust_pyd.exists():
-    for pyd_file in rust_pyd.glob('*.pyd'):
-        binaries.append((str(pyd_file), '.'))
-
 a = Analysis(
     ['main.py'],
     pathex=[str(spec_dir)],
@@ -82,7 +77,6 @@ a = Analysis(
         'PIL.JpegImagePlugin',
         'PIL.TiffImagePlugin',
         'psutil',
-        'seams_core',
         'packaging',
     ],
     hookspath=[],

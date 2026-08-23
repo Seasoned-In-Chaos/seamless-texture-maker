@@ -1,6 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
 """
-PyInstaller spec file for SEAMS v3.0.
+PyInstaller spec file for SEAMS.
 Build command: pyinstaller build.spec --clean
 """
 
@@ -45,11 +45,6 @@ hiddenimports += filtered_submodules('llvmlite')
 # collect_data_files/collect_dynamic_libs on PyQt6 — they pull in
 # everything including unused submodules.
 
-try:
-    hiddenimports += collect_submodules('seams_core')
-except Exception:
-    pass
-
 datas.append(('resources', 'resources'))
 
 a = Analysis(
@@ -71,7 +66,6 @@ a = Analysis(
         'PIL.JpegImagePlugin',
         'PIL.TiffImagePlugin',
         'psutil',
-        'seams_core',
         'packaging',
     ],
     hookspath=[],
@@ -158,7 +152,6 @@ exe = EXE(
         'ucrtbase.dll',
         'msvcp140.dll',
         'python3*.dll',
-        'seams_core.pyd',
     ],
     runtime_tmpdir=None,
     console=False,

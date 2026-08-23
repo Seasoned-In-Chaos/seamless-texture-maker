@@ -136,7 +136,7 @@ def main():
 
     app = LoggingApplication(sys.argv)
     app.setApplicationName(APP_NAME)
-    app.setOrganizationName("StudioTools")
+    app.setOrganizationName("Shubham Panchasara")
 
     icon_path = get_icon_path()
     if icon_path:
@@ -152,6 +152,7 @@ def main():
     window.setAcceptDrops(True)
 
     def _on_splash_done():
+        splash.wait_for_precompile()
         splash.close()
         window.show()
         # After show() the native HWND is fully created.  Push the .ico

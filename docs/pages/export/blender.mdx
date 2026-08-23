@@ -1,34 +1,12 @@
 ---
 title: Blender
-description: Export PBR textures for Blender's Principled BSDF shader.
+description: Exporting textures for use in Blender.
 ---
 
-# Blender Export
+# Blender
 
-SEAMS exports textures optimized for Blender's Principled BSDF with OpenGL normal convention. It writes texture maps only; material nodes are configured in Blender.
+SEAMS does not currently include a Blender-specific export preset. Export the individual maps from [PBR Export](/pages/export/pbr-export) and wire them into your material's Principled BSDF node in Blender.
 
-## Blender Default Settings
-
-| Setting | Value |
-|---|---|
-| Workflow | Roughness |
-| Normal Format | OpenGL (Y+) |
-| Format | PNG |
-| Bit Depth | 16-bit |
-| Output | Texture maps only |
-
-## File Naming
-
-```
-MaterialName_BLENDER_BaseColor.png
-MaterialName_BLENDER_Normal.png
-MaterialName_BLENDER_Roughness.png
-MaterialName_BLENDER_AO.png
-MaterialName_BLENDER_Displacement.png
-```
-
-## Tips for Blender
-
-- Import textures as **Non-Color** (for Normal, Roughness, AO, Displacement) or **sRGB** (for BaseColor)
-- Enable **Displacement** in the material settings when using displacement with Cycles
-- For Eevee, configure a bump or displacement node manually as required by the material
+<Tip>
+Blender's Normal Map node expects OpenGL-convention (Y+) normal maps — the default in Material Lab's Normal controls.
+</Tip>

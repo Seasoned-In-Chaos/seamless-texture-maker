@@ -915,6 +915,7 @@ class MainWindow(QMainWindow):
         from PyQt6.QtCore import Qt
 
         dialog = QDialog(self)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         dialog.setWindowTitle("Keyboard Shortcuts")
         dialog.setFixedSize(580, 560)
         dialog.setWindowFlags(
@@ -1507,8 +1508,17 @@ class MainWindow(QMainWindow):
         fixes the backlog instead of just working around it."""
         self._request_live_preview()
 
-    def _process_at_scale(self, scale: float):
-        """Process the texture at a reduced scale and display the result."""
+    def _process_at_scale(self, scale: float, max_dim: int = 256):
+        """Process the texture at a reduced scale and display the result.
+
+        The result is additionally capped to at most *max_dim* on the long
+        edge. This runs synchronously on the GUI thread (called from a 0ms
+        timer) so stage-1 preview feels instant -- but *scale* alone doesn't
+        bound the work for a large source: a 6000px image still renders a
+        750px frame at scale=0.125, which is enough to stutter interactive
+        dragging. Stage 2 and the full-resolution settle refine the result
+        moments later regardless, so stage 1 doesn't need to be this large.
+        """
         channel = self._selected_edit_channel()
         source = self._edit_source_image(channel)
         if source is None:
@@ -1516,8 +1526,9 @@ class MainWindow(QMainWindow):
         edit_generation = self._edit_generation
         import cv2
         h, w = source.shape[:2]
-        small_w = max(1, int(w * scale))
-        small_h = max(1, int(h * scale))
+        effective_scale = min(scale, max_dim / max(h, w, 1))
+        small_w = max(1, int(w * effective_scale))
+        small_h = max(1, int(h * effective_scale))
         # Resize the channel actually being edited, not always Base Color --
         # this was the direct cause of Seamless-tab edits on a non-Base-Color
         # channel silently processing Base Color data and writing that
@@ -1615,18 +1626,34 @@ class MainWindow(QMainWindow):
         self._pending_reprocess = False
         self.progress.setRange(0, 0)
         self.progress.show()
-        params = self.control_panel.get_parameters()
-        params["preprocessing"] = self.pre_panel.get_parameters()
-        params["delight_only"] = self._active_mode == "delight"
-        self.processor.set_parameters(**params)
-        self._processing_generation += 1
-        generation = self._processing_generation
-        self._processing_target_channel = channel
-        self._processing_target_edit_generation = self._edit_generation
-        self.processing_thread = ProcessingThread(source, params, generation, self)
-        self.processing_thread.finished.connect(self._on_processing_finished)
-        self.processing_thread.error.connect(self._on_processing_error)
-        self.processing_thread.start()
+        try:
+            params = self.control_panel.get_parameters()
+            params["preprocessing"] = self.pre_panel.get_parameters()
+            params["delight_only"] = self._active_mode == "delight"
+            self.processor.set_parameters(**params)
+            self._processing_generation += 1
+            generation = self._processing_generation
+            self._processing_target_channel = channel
+            self._processing_target_edit_generation = self._edit_generation
+            if self.processing_thread is not None:
+                # Reached only when the previous thread has already finished
+                # (the isRunning() guard above returns early otherwise), so
+                # it's safe to release now -- otherwise each settle orphans a
+                # full-resolution copy for the app's lifetime (Qt-parented,
+                # so neither Python GC nor the C++ side ever reclaims it).
+                self.processing_thread.deleteLater()
+            self.processing_thread = ProcessingThread(source, params, generation, self)
+            self.processing_thread.finished.connect(self._on_processing_finished)
+            self.processing_thread.error.connect(self._on_processing_error)
+            self.processing_thread.start()
+        except Exception as exc:
+            # Anything raised here happens before the worker thread starts,
+            # so it would otherwise never reach _on_processing_error and the
+            # progress bar would stay stuck on "Processing..." forever with
+            # no visible sign anything went wrong.
+            log_exception(logger, "Failed to start texture processing", exc)
+            self.progress.hide()
+            QMessageBox.critical(self, "Processing Error", str(exc))
 
     def _on_processing_finished(self, result, elapsed, generation):
         self.progress.hide()
@@ -1776,7 +1803,10 @@ class MainWindow(QMainWindow):
         base = self._current_export_image()
         if base is None:
             return None
-        generated = NormalGenerator.process(base, **self.normal_panel.get_parameters())
+        # Defensive copy: base is a live reference (processor.processed_image
+        # or image_np, not a snapshot) and NormalGenerator.process() is a
+        # shared utility other callers may not treat as side-effect-free.
+        generated = NormalGenerator.process(base.copy(), **self.normal_panel.get_parameters())
         for name, img in generated.items():
             self.material_maps[name] = img.copy()
             # Keep the viewer's per-channel pixmap cache in lockstep with

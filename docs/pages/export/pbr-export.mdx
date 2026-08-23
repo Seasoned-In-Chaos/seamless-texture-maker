@@ -1,100 +1,25 @@
 ---
-title: PBR Export Pipeline
-description: Full texture-map export with renderer-specific presets and workflow conversion.
+title: PBR Export
+description: Exporting seamless textures and individual PBR maps.
 ---
 
-# PBR Export Pipeline
+# PBR Export
 
-Press `Ctrl+Shift+E` to open the Production Export dialog. This provides renderer-specific texture-map export with naming, format conversion, normal-channel conversion, glossiness conversion, and UE5 ORM packing.
+SEAMS exports texture maps directly from the toolbar and keyboard shortcuts below — there is no separate export dialog or renderer-preset system.
 
-## Renderer Presets
+## Export Paths
 
-| Renderer | Token | Default Normal | Default Format | Default Bit Depth |
-|---|---|---|---|---|
-| **Corona** | CORONA | OpenGL (Y+) | PNG | 16-bit |
-| **V-Ray** | VRAY | DirectX (Y-) | TIFF | 16-bit |
-| **Unreal Engine 5** | UE5 | DirectX (Y-) | PNG | 8-bit |
-| **Blender** | BLENDER | OpenGL (Y+) | PNG | 16-bit |
-| **Generic PBR** | PBR | OpenGL (Y+) | PNG | 16-bit |
-
-Selecting a renderer applies its default settings and shows renderer-specific options.
-
-## Common Export Settings
-
-| Setting | Options | Default (varies by renderer) |
+| Action | Shortcut | What it does |
 |---|---|---|
-| Workflow | Roughness, Specular/Glossiness | Per renderer |
-| Texture Format | PNG, TIFF, EXR | Per renderer |
-| Normal Format | OpenGL (Y+), DirectX (Y-) | Per renderer |
-| Bit Depth | 8-bit, 16-bit, or 32-bit EXR | Per renderer |
-| Resolution | 1K (1024), 2K (2048), 4K (4096), 8K (8192) | 4K |
+| Save Current Texture | `Ctrl+S` | Saves the processed seamless texture |
+| Save As... | `Ctrl+Shift+S` | Saves to a chosen path and format |
+| Export Selected Map | `Ctrl+E` | Saves the currently active channel (Base Color, Normal, Roughness, AO, Displacement, or Opacity), generating it first if needed |
+| Quick Export button | — | Uses the Format and Save Mode set in the control panel |
 
-<Note>
-The Resolution setting resizes the image. It does not supersample — selecting 8K for a 2K source will upscale. Select the resolution that matches or is lower than your source for best quality.
-</Note>
+See [Quick Export](/pages/export/quick-export) for format, compression, DPI, and file-naming details.
 
-## Map Toggles
+## Renderer Workflows
 
-| Map | Colorspace | Default | Notes |
-|---|---|---|---|
-| BaseColor | sRGB | On | — |
-| Roughness | Linear | On | Converted to Glossiness if workflow requires |
-| Normal | Linear | On | — |
-| AO | Linear | On | Packed into ORM for UE5 |
-| Displacement | Linear | On | — |
-| Opacity | Linear | Off | Off by default |
+SEAMS does not apply renderer-specific presets (ORM packing, glossiness conversion, per-renderer naming) automatically. Export the individual maps above and configure color space, texture packing, and compression in your target application.
 
-Each map card shows a thumbnail, name, colorspace/bit-depth, and packed/unpacked state.
-
-## Output Configuration
-
-| Setting | Default |
-|---|---|
-| Export Folder | Last used directory or user home |
-| Material Name | `Material_01` |
-| Create Renderer Subfolder | Checked |
-| Subfolder Name | `{MaterialName}_{RendererToken}` |
-
-Invalid filename characters in the material name are replaced with `_` and duplicate underscores are collapsed.
-
-## File Naming
-
-### UE5 Convention
-
-- `T_{MaterialName}_D{ext}` — Diffuse/BaseColor
-- `T_{MaterialName}_N{ext}` — Normal
-- `T_{MaterialName}_ORM{ext}` — Packed ORM
-
-### All Other Renderers
-
-- `{MaterialName}_{Token}_{Channel}{ext}`
-
-### Export Extensions
-
-`.png`, `.tiff`, `.tga`, `.exr` depending on format selection.
-
-## Material Setup
-
-The exporter intentionally writes texture maps only. Create and wire the material in the target application so its color-space, compression, and shader settings match the project.
-
-## Glossiness Conversion
-
-When the **Specular/Glossiness** workflow is selected, or when renderer-specific "Convert Roughness to Glossiness" is enabled:
-
-```
-glossiness = bitwise_not(roughness_gray)
-```
-
-This produces an inverted roughness map suitable for glossiness-based renderers.
-
-## Displacement Clamping
-
-When "Clamp displacement values" is enabled (Corona default), grayscale values are clamped to the range `[8, 247]` to prevent extreme displacement artifacts.
-
----
-
-For renderer-specific details, see:
-- [Unreal Engine 5](/pages/export/ue5)
-- [Blender](/pages/export/blender)
-- [Corona](/pages/export/corona)
-- [V-Ray](/pages/export/vray)
+The Normal map's orientation (OpenGL Y+ vs. DirectX Y-) is set in Material Lab's Normal controls at generation time — pick the convention your target renderer expects before exporting.

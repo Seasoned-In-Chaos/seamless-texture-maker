@@ -7,6 +7,8 @@ OpenCV-compatible BGR arrays at the return boundary. Normal maps retain
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import math
 import time
@@ -16,13 +18,45 @@ from typing import Dict
 import cv2
 import numpy as np
 
-from .cache import make_pbr_key, ResultCache
+from .cache import hash_image, ResultCache
 from .assertions import assert_float32
 
-_pbr_cache = ResultCache(max_size=30)
+# Params each map actually depends on, keyed by map name -- the single
+# source of truth for "which maps exist" and "what does each one read".
+# Keeping each list narrow is the whole point of per-channel caching: a
+# cache key built from only the relevant subset means changing one
+# Roughness slider only invalidates Roughness, not the other four maps
+# too. height_source is shared by all of them since it changes the
+# underlying grayscale field every map reads from -- added automatically
+# in _channel_cache_key rather than repeated in each entry below.
+_HEIGHT_SOURCE_PARAM = "height_source"
+_MAP_PARAMS: Dict[str, tuple] = {
+    "Displacement": ("height_contrast", "height_blur_sharp", "height_invert"),
+    "Roughness": ("rough_intensity", "rough_contrast", "rough_invert"),
+    "AO": ("ao_strength", "ao_mean", "ao_range", "ao_blur_sharp", "ao_invert"),
+    "Normal": (
+        "normal_invert_x", "normal_invert_y", "normal_min_z", "normal_scale",
+        "normal_filter", "normal_wrap", "normal_invert_height", "normal_format",
+    ),
+    "Opacity": ("alpha_threshold", "alpha_softness"),
+}
+_ALL_MAPS = tuple(_MAP_PARAMS)
+
+# Each image+params combination now occupies up to len(_ALL_MAPS) cache
+# slots instead of 1 (one entry per channel, not one entry per whole PBR
+# dict), so max_size is scaled to match -- otherwise the cache would only
+# hold ~1/5th as many distinct images as before per-channel caching.
+_pbr_cache = ResultCache(max_size=30 * len(_ALL_MAPS))
+
+
+def _channel_cache_key(img_hash: str, map_name: str, params: dict, relevant: tuple) -> str:
+    sub = {k: params.get(k) for k in relevant}
+    sub[_HEIGHT_SOURCE_PARAM] = params.get(_HEIGHT_SOURCE_PARAM, "average_rgb")
+    param_str = json.dumps(sub, sort_keys=True, default=str)
+    param_hash = hashlib.md5(param_str.encode()).hexdigest()
+    return f"pbrchan_{map_name}_{img_hash}_{param_hash}"
 _PBR_EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="seams-pbr")
 
-HAS_RUST_GRADIENTS = False  # Deprecated in favor of OpenCV Scharr Pipeline
 logger = logging.getLogger("seams.pbr")
 
 
@@ -37,8 +71,6 @@ def _gray_to_bgr_u8(channel: np.ndarray, alpha: np.ndarray | None = None) -> np.
         return np.dstack([bgr, a_u8])
     return bgr
 
-
-# Removed compute_gradients_jit and gradients_to_normals_jit as they are replaced by cv2.Scharr pipeline
 
 def _linear_contrast(src: np.ndarray, contrast: float) -> np.ndarray:
     """Linear contrast adjustment, pivoted around mid-gray — the exact
@@ -225,8 +257,8 @@ def _compute_roughness(gray: np.ndarray, params: dict) -> np.ndarray:
     return np.clip(rough * (ri * 2.0), 0, 1)
 
 
-def _compute_normal(h_map: np.ndarray, gray: np.ndarray,
-                    params: dict, alpha: np.ndarray | None = None) -> np.ndarray:
+def _compute_normal(h_map: np.ndarray, params: dict,
+                    alpha: np.ndarray | None = None) -> np.ndarray:
     """Compute a tileable, slope-space 16-bit tangent-space normal map.
 
     Normal generation uses the same important property as production texture
@@ -348,20 +380,48 @@ class NormalGenerator:
         """
         t_total = time.perf_counter()
 
-        # Cache lookup
+        # Per-channel cache lookup: each map is keyed on only the params it
+        # actually reads (_MAP_PARAMS above), so tweaking one Roughness
+        # slider can't invalidate Normal/AO/Displacement/Opacity too. If
+        # every map is already cached for this image+params combination
+        # (e.g. just switching the active tab), this returns without ever
+        # touching the grayscale/alpha extraction below.
+        keys = {}
         if use_cache:
-            cache_key = make_pbr_key(image, params)
-            cached = _pbr_cache.get_pbr(cache_key)
-            if cached is not None:
-                logger.debug("PBR cache HIT")
-                return cached
+            img_hash = hash_image(image)
+            keys = {
+                name: _channel_cache_key(img_hash, name, params, relevant)
+                for name, relevant in _MAP_PARAMS.items()
+            }
+            result: Dict[str, np.ndarray] = {}
+            for name, key in keys.items():
+                cached = _pbr_cache.get_pipeline(key)
+                if cached is not None:
+                    result[name] = cached
+            if len(result) == len(_ALL_MAPS):
+                logger.debug("PBR cache HIT (all channels)")
+                return result
+        else:
+            result = {}
 
-        # Parse float32 grayscale [0,1] based on Height Source
+        needed = {name for name in _ALL_MAPS if name not in result}
+        logger.debug("PBR cache: %d/%d channels hit, computing %s",
+                      len(_ALL_MAPS) - len(needed), len(_ALL_MAPS), sorted(needed))
+
+        # Parse float32 grayscale [0,1] based on Height Source.
+        # .astype(np.float32) always copies (even when the dtype already
+        # matches -- copy=True is the default), so the /= below can never
+        # mutate the caller's array. It used to skip that copy whenever the
+        # input was already float32, and then divide in place: any caller
+        # that didn't separately defend with its own .copy() (as
+        # MaterialMapThread.run() does, but _material_channel_image()'s
+        # on-demand-generation path did not) got its live image silently
+        # divided by 255 -- e.g. switching to a not-yet-generated material
+        # tab corrupted the shared Base Color / processed image in place.
         if image.dtype == np.uint16:
             image = image.astype(np.float32) / 65535.0
         else:
-            if image.dtype != np.float32:
-                image = image.astype(np.float32)
+            image = image.astype(np.float32)
             if image.size and float(np.nanmax(image)) > 1.0:
                 image /= 255.0
         image = np.nan_to_num(image, nan=0.0, posinf=1.0, neginf=0.0)
@@ -393,17 +453,23 @@ class NormalGenerator:
         # ── Phase 1: parallel independent maps ──────────────────────
         # Displacement, Roughness and AO each depend only on the height-
         # source grayscale, not on one another, so they can run concurrently.
+        # Only the ones actually missing from the per-channel cache are
+        # submitted -- a Roughness-only slider change no longer pays to
+        # recompute Displacement and AO too.
         t1 = time.perf_counter()
-        fut_disp = _PBR_EXECUTOR.submit(_compute_displacement, gray, params)
-        fut_rough = _PBR_EXECUTOR.submit(_compute_roughness, gray, params)
-        fut_ao = _PBR_EXECUTOR.submit(_compute_ao, gray, params)
+        futures = {}
+        if "Displacement" in needed:
+            futures["Displacement"] = _PBR_EXECUTOR.submit(_compute_displacement, gray, params)
+        if "Roughness" in needed:
+            futures["Roughness"] = _PBR_EXECUTOR.submit(_compute_roughness, gray, params)
+        if "AO" in needed:
+            futures["AO"] = _PBR_EXECUTOR.submit(_compute_ao, gray, params)
 
-        disp_f = fut_disp.result()
-        rough_f = fut_rough.result()
-        ao_f = fut_ao.result()
+        scalar_fields = {name: fut.result() for name, fut in futures.items()}
 
         phase1_ms = (time.perf_counter() - t1) * 1000.0
-        logger.debug("PBR phase 1 (parallel): %.1f ms", phase1_ms)
+        if futures:
+            logger.debug("PBR phase 1 (parallel): %.1f ms (%s)", phase1_ms, sorted(futures))
 
         # ── Phase 2: normal ──────────────────────────────────────────
         # Normals should describe the source height field directly.  Using
@@ -411,35 +477,34 @@ class NormalGenerator:
         # gradient detail, which is the main cause of soft, oversaturated
         # normals.  Displacement remains available as its own output map.
         t2 = time.perf_counter()
-        normal_img = _compute_normal(gray, gray, params, alpha=alpha_channel)
-
+        if "Normal" in needed:
+            result["Normal"] = _compute_normal(gray, params, alpha=alpha_channel)
         phase2_ms = (time.perf_counter() - t2) * 1000.0
-        logger.debug("PBR phase 2 (normal): %.1f ms", phase2_ms)
 
         # ── Remaining maps (sequential — cheap) ─────────────────────
-        # Opacity
-        ot = params.get("alpha_threshold", 1.0)
-        aso = params.get("alpha_softness", 0.0)
-        threshold = 1.0 - ot
-        if aso > 0:
-            width = max(0.01, aso * 0.45)
-            opacity = np.clip((gray - threshold + width * 0.5) / width, 0.0, 1.0)
-        else:
-            opacity = np.where(gray > threshold, 1.0, 0.0)
+        if "Opacity" in needed:
+            ot = params.get("alpha_threshold", 1.0)
+            aso = params.get("alpha_softness", 0.0)
+            threshold = 1.0 - ot
+            if aso > 0:
+                width = max(0.01, aso * 0.45)
+                opacity = np.clip((gray - threshold + width * 0.5) / width, 0.0, 1.0)
+            else:
+                opacity = np.where(gray > threshold, 1.0, 0.0)
+            result["Opacity"] = _gray_to_bgr_u8(opacity, alpha=alpha_channel)
 
-        # ── Convert to uint8 BGR(A) at boundary ────────────────────────
-        result: Dict[str, np.ndarray] = {
-            "Normal": normal_img,
-            "Roughness": _gray_to_bgr_u8(rough_f, alpha=alpha_channel),
-            "AO": _gray_to_bgr_u8(ao_f, alpha=alpha_channel),
-            "Displacement": _gray_to_bgr_u8(disp_f, alpha=alpha_channel),
-            "Opacity": _gray_to_bgr_u8(opacity, alpha=alpha_channel),
-        }
+        # ── Convert newly computed scalar fields to uint8 BGR(A) ────────
+        for name, field in scalar_fields.items():
+            result[name] = _gray_to_bgr_u8(field, alpha=alpha_channel)
 
         total_ms = (time.perf_counter() - t_total) * 1000.0
-        logger.info("PBR total: %.1f ms (phase1=%.1f, phase2=%.1f)", total_ms, phase1_ms, phase2_ms)
+        logger.info(
+            "PBR total: %.1f ms (phase1=%.1f, phase2=%.1f, %d/%d from cache)",
+            total_ms, phase1_ms, phase2_ms, len(_ALL_MAPS) - len(needed), len(_ALL_MAPS),
+        )
 
         if use_cache:
-            _pbr_cache.set_pbr(cache_key, result)
+            for name in needed:
+                _pbr_cache.set_pipeline(keys[name], result[name])
 
         return result

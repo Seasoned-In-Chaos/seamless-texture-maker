@@ -7,10 +7,6 @@ __pycache__/
 .venv-build/
 *.egg-info/
 
-# Rust / Cargo
-seams_core/target/
-seams_core/Cargo.lock
-
 # Build output
 dist/
 build/
@@ -37,3 +33,6 @@ output.log
 
 # Temp / scratch
 scratch/
+
+# Benchmark output
+benchmarks/results_*.json

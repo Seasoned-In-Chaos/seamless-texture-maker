@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import numpy as np
 import cv2
-from .gpu_utils import GPUAccelerator, is_cuda_available
 from .assertions import assert_float32
 
 

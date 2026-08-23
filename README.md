@@ -1,6 +1,6 @@
 # SEAMS - Seamless Texture Studio
 
-A powerful, GPU-accelerated desktop application for creating perfectly seamless textures and PBR materials for 3D workflows. Built with Python, PyQt6, OpenCV with CUDA support, and a Rust extension module.
+A powerful desktop application for creating perfectly seamless textures and PBR materials for 3D workflows. Built with Python, PyQt6, and OpenCV, with Numba JIT-accelerated map generation.
 
 ![Version](https://img.shields.io/badge/version-3.2.0-blue)
 ![Python](https://img.shields.io/badge/python-3.11%2B-green)
@@ -28,9 +28,8 @@ A powerful, GPU-accelerated desktop application for creating perfectly seamless 
 - **Workspace Modes** - Toggle between "Classic Mode" (2D) and "Studio Mode" (split 2D/3D workspace).
 
 ### Performance & Export Pipelines
-- **Renderer-Specific Export** - One-click texture-map export for Unreal Engine 5 (ORM packing), Blender, V-Ray, Corona, and Generic PBR workflows.
-- **GPU Acceleration** - CUDA-optimized operations and Numba JIT compilation for heavy map generation.
-- **Rust Extension** - Critical path operations (edge blending, gradient computation, splat) in native Rust via PyO3.
+- **Texture & Map Export** - Save the seamless texture or any individual PBR map (Base Color, Normal, Roughness, AO, Displacement, Opacity) via quick-save, save-as, or per-map export.
+- **Numba JIT Acceleration** - JIT-compiled hot paths for heavy map generation, warmed up in the background at startup.
 - **Multi-threaded Architecture** - Background processing keeps the UI fully responsive.
 - **Result Caching** - LRU cache with pipeline and PBR buckets avoids redundant recomputation.
 
@@ -44,8 +43,6 @@ A powerful, GPU-accelerated desktop application for creating perfectly seamless 
 
 - Windows 10/11 (64-bit)
 - Python 3.11 or newer
-- NVIDIA GPU with CUDA support (optional, falls back to CPU)
-- Rust toolchain (for building `seams_core` extension)
 
 ### Install from Source
 
@@ -61,10 +58,6 @@ python -m venv .venv
 # Install dependencies
 pip install -r requirements.txt
 
-# Build the Rust extension
-pip install maturin
-cd seams_core && maturin develop --release && cd ..
-
 # Run the application
 python main.py
 ```
@@ -72,7 +65,7 @@ python main.py
 ### Building the Installer
 
 ```bash
-# Run the full build pipeline (venv, deps, MSVC, Rust, PyInstaller, signing, Inno Setup)
+# Run the full build pipeline (venv, deps, PyInstaller, signing, Inno Setup)
 build.bat
 
 # Or build for Microsoft Store (MSIX package)
@@ -92,13 +85,13 @@ The build produces:
 3. **Seamless** - Make the texture tileable using Offset + Cross-Fade, Mirror Tiling, Overlap, or Splat modes.
 4. **Material Lab** - Generate and tweak PBR maps (Normal, Roughness, AO, etc.).
 5. **Studio Mode** - Switch to Studio Mode to preview your material on a 3D mesh.
-6. **Export** - Use `Ctrl+Shift+E` to export the full PBR package for your target renderer.
+6. **Export** - Use `Ctrl+E` to export the active map, or `Ctrl+S` / `Ctrl+Shift+S` to save the seamless texture.
 
 ### Keyboard Shortcuts
 
 - `Ctrl+O` - Open image
 - `Ctrl+S` - Save current map
-- `Ctrl+Shift+E` - Export PBR Pipeline
+- `Ctrl+E` - Export selected map
 - `1 / 2 / 3` - Switch between Delight, Seamless, and Material Lab modes.
 - `F1` - Show Shortcuts
 - `Escape` - Exit Fullscreen Mode
@@ -114,17 +107,14 @@ seamless-texture-maker/
 │   │   ├── seamless.py          # Main seamless processor
 │   │   ├── delighting.py        # Delighting algorithm
 │   │   ├── normal_generator.py  # PBR map generation (Normal, Roughness, AO, Displacement, Opacity)
-│   │   ├── edge_blending.py     # Edge blending (Python)
-│   │   ├── edge_blending_jit.py # Edge blending (Numba JIT)
-│   │   ├── inpainting.py        # Inpainting algorithm
 │   │   ├── materialize_methods.py    # Materialize (Python)
 │   │   ├── materialize_methods_jit.py # Materialize (Numba JIT)
 │   │   ├── offset_mapping.py    # Offset mapping
-│   │   ├── gpu_utils.py         # CUDA/Numba acceleration
+│   │   ├── texture_mipmaps.py   # Viewport mipmap generation
+│   │   ├── gpu_utils.py         # GPU detection (inactive -- see Technical Details)
 │   │   ├── cache.py             # LRU result cache
 │   │   ├── assertions.py        # Runtime assertions
-│   │   ├── exceptions.py        # Custom exceptions
-│   │   └── warmup.py            # JIT warmup on startup
+│   │   └── exceptions.py        # Custom exceptions
 │   ├── gui/                     # User interface
 │   │   ├── main_window.py       # Main application window
 │   │   ├── image_viewer.py      # 2D Viewport & Workspace Splitter
@@ -140,20 +130,15 @@ seamless-texture-maker/
 │       ├── image_io.py          # Image read/write
 │       ├── app_logging.py       # Logging setup
 │       ├── perf.py              # Performance monitoring
-├── seams_core/                  # Rust extension (PyO3)
-│   ├── src/
-│   │   ├── lib.rs               # Module entry point
-│   │   ├── edge_blend.rs        # Edge blending (Rust)
-│   │   ├── gradients.rs         # Gradient computation (Rust)
-│   │   └── splat.rs             # Splat algorithm (Rust)
-│   ├── Cargo.toml
-│   └── pyproject.toml
 ├── tests/                       # Test suite
 │   ├── test_cache.py
-│   ├── test_edge_blending.py
 │   ├── test_image_io.py
+│   ├── test_live_preview.py
 │   ├── test_normal_generator.py
-│   └── test_splat.py
+│   ├── test_overlap_blend.py
+│   ├── test_seamless_methods.py
+│   ├── test_splat.py
+│   └── test_texture_mipmaps.py
 ├── benchmarks/                  # Performance benchmarks
 ├── store/                       # Microsoft Store assets
 ├── .github/workflows/build.yml  # CI pipeline
@@ -168,32 +153,13 @@ seamless-texture-maker/
 
 ## Technical Details
 
-### Edge Blending Algorithm
+### Seam Blending
 
-Traditional approaches use Gaussian blur which destroys edge details. Our implementation uses:
+Each seamless method uses its own vectorized, numpy-based feathering rather than a plain Gaussian blur (which destroys edge detail): Offset + Cross-Fade uses a linear falloff from the center seam, while Overlap and Splat use smoothstep-based masks tuned to avoid ghosting on high-detail content. No per-pixel Python loops are involved.
 
-1. **Distance-based gradient** - Calculate distance from seam
-2. **Smoothstep interpolation** - Smooth falloff curve: `t^2 * (3 - 2t)`
-3. **Neighbor blending** - Blend with wrapped opposite edge
-4. **Chunked 2D fade** - At tile corners, `fade = fade_y * fade_x` for artifact-free blending
-5. **Vectorized operations** - Process all offsets at once
+### GPU Acceleration (currently inactive)
 
-**Result:** Sharp seams with proper falloff, ~10x faster than loop-based approach.
-
-### Rust Extension (seams_core)
-
-Performance-critical operations are implemented in Rust via PyO3:
-- **Edge blending** - Direct numpy array access for zero-copy processing
-- **Gradient computation** - Sobel gradient fields for normal map generation
-- **Splat** - Texture bombing with gaussian splat distribution
-
-### GPU Acceleration
-
-When CUDA is available:
-- Image resizing on GPU
-- Alpha blending operations
-- Gaussian blur (when needed)
-- Automatic CPU fallback
+`gpu_utils.py` provides CUDA detection and a `GPUAccelerator` wrapper (resize, Gaussian blur, alpha blend, inpaint) with automatic CPU fallback on any failure. It isn't wired into the processing pipeline today because the pinned `opencv-python-headless` package ships without CUDA support compiled in — `is_cuda_available()` returns `False` on every install regardless of the user's GPU. Enabling this for real would require switching to a CUDA-enabled OpenCV build and re-verifying on real hardware; everything currently ships on CPU/Numba, which is fast enough that this hasn't been a priority.
 
 ### Live Preview System
 
@@ -221,10 +187,8 @@ LRU cache with separate buckets for pipeline and PBR results:
 
 | Operation | Before | After | Improvement |
 |-----------|--------|-------|-------------|
-| Edge Blend | 120ms | 12ms | **10x faster** |
 | Live Preview | N/A | 50ms | **20fps** |
 | Splat (512px) | 850ms | 180ms | **4.7x faster** |
-| GPU vs CPU | Baseline | 3-5x | **CUDA** |
 | Build Size | 185 MB | 131 MB | **30% smaller** |
 
 *Tested on: i7-10700K, RTX 3070, 2048x2048 texture*
@@ -234,11 +198,9 @@ LRU cache with separate buckets for pipeline and PBR results:
 ### Phase 1: Quick Wins (Done)
 - [x] Distance-based edge falloff
 - [x] Live preview system
-- [x] GPU acceleration
 - [x] Vectorized operations
 - [x] Numba JIT compilation
 - [x] Result caching
-- [x] Rust extension for critical paths
 
 ### Phase 2: Polish & Ship (In Progress)
 - [x] DPI-aware window sizing (1080p+)
@@ -271,7 +233,6 @@ MIT License - see [LICENSE](LICENSE) for details
 - Inspired by [Materialize](https://github.com/BoundingBoxSoftware/Materialize)
 - OpenCV for image processing
 - PyQt6 for the GUI framework
-- PyO3 for Python-Rust interop
 
 ## Contact
 
