@@ -11,6 +11,7 @@ Build command:
   pyinstaller build_store.spec --clean
 """
 
+import os
 import sys
 from pathlib import Path
 
@@ -23,7 +24,13 @@ from PyInstaller.utils.hooks import (
 spec_dir = Path(SPECPATH)
 
 EXCLUDE_PATTERNS = [
-    'tests', 'testing', 'cuda', 'test_', 'doc_examples',
+    # NOT 'tests' or 'testing': numba.cuda unconditionally imports
+    # numba.runtests -> numba.testing._runtests at module load (purely to
+    # define an unused numba.cuda.test() convenience helper), and a bare
+    # 'tests' substring pattern would also match that -- 'test_' below still
+    # filters individual test_*.py files, and the real ~4MB numba.tests/
+    # suite is excluded precisely (not by substring) below instead.
+    'test_', 'doc_examples',
     'pycc', 'gdb', 'benchmarks', 'rocksdb', 'tbbpool',
 ]
 
@@ -45,6 +52,40 @@ datas += filtered_data('llvmlite')
 binaries += collect_dynamic_libs('llvmlite')
 hiddenimports += filtered_submodules('numba')
 hiddenimports += filtered_submodules('llvmlite')
+
+# NVIDIA CUDA redistributables for the optional Splat GPU path (Numba
+# @cuda.jit -- see app/core/materialize_methods_cuda.py and
+# gpu_utils._cuda_redist_roots/_ensure_cuda_home, which look for exactly
+# this 'cuda_redist/nvcc/...' + 'cuda_redist/runtime/...' layout next to
+# the frozen executable). Only the specific files Numba actually loads are
+# bundled, not the ~37MB of C++ headers, static .lib files and ptxas.exe
+# these two pip packages also carry, which are for compiling CUDA C++ and
+# irrelevant to Numba's own NVVM-based JIT pipeline. Harmless if either
+# package is somehow missing at build time (requirements.txt pins both for
+# win32, so this should never happen) -- the app just falls back to the
+# CPU-only Splat path at runtime, same as on a non-NVIDIA machine.
+import glob
+
+try:
+    import nvidia.cuda_nvcc as _cuda_nvcc
+    _nvcc_root = next(iter(_cuda_nvcc.__path__))
+    # Globbed, not a hardcoded filename: nvvm64_40_0.dll is versioned and
+    # requirements.txt only pins a major-version range, so a different
+    # nvidia-cuda-nvcc-cu12 release could ship a different exact name.
+    for _dll in glob.glob(os.path.join(_nvcc_root, 'nvvm', 'bin', 'nvvm64_*.dll')):
+        datas.append((_dll, 'cuda_redist/nvcc/nvvm/bin'))
+    for _bc in glob.glob(os.path.join(_nvcc_root, 'nvvm', 'libdevice', 'libdevice*.bc')):
+        datas.append((_bc, 'cuda_redist/nvcc/nvvm/libdevice'))
+except ImportError:
+    pass
+
+try:
+    import nvidia.cuda_runtime as _cuda_runtime
+    _runtime_root = next(iter(_cuda_runtime.__path__))
+    for _dll in glob.glob(os.path.join(_runtime_root, 'bin', 'cudart64_*.dll')):
+        datas.append((_dll, 'cuda_redist/runtime/bin'))
+except ImportError:
+    pass
 
 # PyQt6: PyInstaller hooks automatically collect the necessary .pyd
 # and Qt6/bin DLLs from hiddenimports.  Do NOT use collect_data_files
@@ -89,17 +130,21 @@ a = Analysis(
         'setuptools', 'pkg_resources',
         'xml.etree', 'xmlrpc',
         'http.server',
-        'unittest', 'doctest',
-        'pdb', 'profile', 'cProfile',
-        'numba.cuda',
-        'numba.tests', 'numba.testing',
-        'numba.np.ufunc.parallel',
+        'doctest',
+        'pdb',
+        # NOT 'unittest', 'profile', 'cProfile': numba.testing.main (needed
+        # by numba.cuda's import chain, see EXCLUDE_PATTERNS above) imports
+        # all three at module load, even though this app never runs numba's
+        # test suite through it.
+        'numba.tests',
         'numba.pycc',
         'numba.np.ufunc.tbbpool',
         'numba.np.ufunc._tbbpool',
         'llvmlite.tests',
-        'llvmlite.binding.ffi',
-        'llvmlite.ir.values',
+        # NOT 'llvmlite.binding.ffi' or 'llvmlite.ir.values': both are on
+        # numba.cuda's real import path (LLVM codegen), unlike the two
+        # numba-testing entries above which are dead weight it merely
+        # imports and never calls.
         'PyQt6.QtNetwork',
         'PyQt6.QtSvg',
         'PyQt6.QtPdf',

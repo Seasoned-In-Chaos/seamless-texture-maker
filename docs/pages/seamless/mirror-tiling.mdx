@@ -18,7 +18,7 @@ Every adjacent edge is an exact reflection of its neighbor. The outer left and r
 
 Because the method explicitly creates a 2×2 grid, the output is twice the input width and twice the input height. This preserves every source pixel while providing a complete reflected repeat unit. The export resolution controls can still resize the result for a target texture size.
 
-For memory safety, Mirror Tiling accepts source images up to 4096px on their longest side; the generated tile can therefore be up to 8192×8192.
+Mirror Tiling supports every source size accepted by the importer (currently up to 8192px on either side). It produces a 2×2 reflected output, so large source images require proportionally more memory and can take longer to process.
 
 ## When to use it
 

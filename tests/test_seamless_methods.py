@@ -83,6 +83,65 @@ def test_overlap_accepts_uint8_material_channels():
     assert int(result.min()) >= 0 and int(result.max()) <= 255
 
 
+def test_large_overlap_uses_one_global_pass(monkeypatch):
+    """Overlap must use the true source edges, never independent chunks."""
+    monkeypatch.setattr(sm, "_CHUNK_THRESHOLD_PX", 100)
+    image = _source(128, 144)
+    processor = SeamlessProcessor()
+    processor.load_image(image)
+
+    def chunking_is_invalid_for_overlap(*args, **kwargs):
+        raise AssertionError("Overlap Blend must not use chunked processing")
+
+    monkeypatch.setattr(processor, "run_pipeline_chunked", chunking_is_invalid_for_overlap)
+    result = processor.process(
+        params={"method": "overlap"},
+        use_cache=False,
+        chunked=True,
+    )
+
+    assert result.shape == image.shape
+    assert np.isfinite(result).all()
+
+
+def test_mirror_accepts_source_larger_than_4096px():
+    """The general import limit, not an arbitrary 4K method cap, applies."""
+    image = np.zeros((4097, 64, 3), dtype=np.uint8)
+    processor = SeamlessProcessor()
+    processor.load_image(image)
+
+    result = processor.process(
+        params={"method": "mirror"},
+        use_cache=False,
+        chunked=True,
+    )
+
+    assert result.shape == (8194, 128, 3)
+    np.testing.assert_array_equal(result[:, 0], result[:, -1])
+    np.testing.assert_array_equal(result[0], result[-1])
+
+
+def test_large_splat_uses_one_global_pass(monkeypatch):
+    """Splat's periodic patch layout must not restart for every chunk."""
+    monkeypatch.setattr(sm, "_CHUNK_THRESHOLD_PX", 100)
+    image = _source(128, 144)
+    processor = SeamlessProcessor()
+    processor.load_image(image)
+
+    def chunking_is_invalid_for_splat(*args, **kwargs):
+        raise AssertionError("Splat Synthesis must not use chunked processing")
+
+    monkeypatch.setattr(processor, "run_pipeline_chunked", chunking_is_invalid_for_splat)
+    result = processor.process(
+        params={"method": "splat"},
+        use_cache=False,
+        chunked=True,
+    )
+
+    assert result.shape == image.shape
+    assert np.isfinite(result).all()
+
+
 def test_splat_accepts_uint8_material_channels():
     image = _source(dtype=np.uint8)
     processor = SeamlessProcessor()

@@ -53,9 +53,10 @@ description: Known limitations and constraints in SEAMS.
 - **Destructive apply** — Applying delight modifies the base image. The previous state is pushed to the undo stack (max 20 steps), but there is no non-destructive mode.
 - **Sliders reset after apply** — All delight sliders are reset to 0 after applying. To re-delight, you must re-adjust sliders.
 
-## Chunked Processing
+## Large-image processing
 
-- **Not configurable** — Chunked processing (1024×1024 tiles with 64px overlap) automatically triggers for images >2048px. Users cannot change tile size or overlap.
+- **Global seamless canvas** — Every seamless method processes the complete image up to 8192×8192. This preserves the edge and periodic relationships that make the exported texture tile correctly.
+- **Memory use** — 8K processing uses substantially more memory, especially Splat Synthesis. When memory is constrained, Splat automatically reduces the number of cached patch variations while keeping one seamless global result.
 
 ## Drag & Drop
 

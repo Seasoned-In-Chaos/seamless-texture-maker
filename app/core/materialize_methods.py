@@ -6,9 +6,13 @@ All functions accept and return float32 arrays.
 """
 from __future__ import annotations
 
+import numba
 import numpy as np
 import cv2
 from .assertions import assert_float32
+from ..utils.app_logging import get_logger
+
+logger = get_logger(__name__)
 
 
 def create_falloff_mask(shape, falloff=0.2, circular=False):
@@ -171,7 +175,12 @@ def synthesis_overlap(image: np.ndarray, overlap_x: float = 0.2,
     return np.clip(result, 0, 255)
 
 
-from .materialize_methods_jit import splat_accumulate_jit, splat_resolve_jit
+from . import materialize_methods_cuda
+from .materialize_methods_jit import (
+    splat_accumulate_jit,
+    splat_accumulate_parallel_jit,
+    splat_resolve_jit,
+)
 
 
 # Patch bank memory ceiling. Rotated copies are pre-rendered once and reused
@@ -235,9 +244,30 @@ def create_splat_mask(shape, falloff: float = 0.3, wobble: float = 0.0,
     return alpha.astype(np.float32)
 
 
+def _splat_variation_counts(image: np.ndarray, scale: float,
+                            rand_rot: float, preview: bool):
+    """Return (stored, desired) rotated-patch variation counts.
+
+    ``stored`` respects the patch-bank memory ceiling.  ``desired`` is the
+    number of orientations the synthesis should use; callers can stream those
+    one at a time when retaining them all would exceed the ceiling.
+    """
+    if rand_rot < 0.01:
+        return 1, 1
+
+    h, w = image.shape[:2]
+    patch_w = max(8, int(round(w * scale)))
+    patch_h = max(8, int(round(h * scale)))
+    channels = 1 if image.ndim == 2 else image.shape[2]
+    patch_bytes = patch_h * patch_w * channels * 4
+    affordable = int(_PATCH_BANK_BUDGET_BYTES // max(1, patch_bytes))
+    desired = 12 if preview else 24
+    return max(1, min(desired, affordable)), desired
+
+
 def _build_patch_bank(image: np.ndarray, scale: float, rotation: float,
                       rand_rot: float, wobble: float, falloff: float,
-                      seed: int, preview: bool):
+                      seed: int, preview: bool, num_variations: int | None = None):
     """Pre-render the rotated patch copies and their masks.
 
     Returns (patches, masks) with shapes (N, ph, pw, C) and (N, ph, pw).
@@ -254,14 +284,12 @@ def _build_patch_bank(image: np.ndarray, scale: float, rotation: float,
     patch_h, patch_w = base_patch.shape[:2]
     channels = base_patch.shape[2]
 
-    if rand_rot < 0.01 and wobble <= 0.001:
-        # Every splat would be identical; one entry is enough.
-        num_variations = 1
-    else:
-        patch_bytes = patch_h * patch_w * channels * 4
-        affordable = int(_PATCH_BANK_BUDGET_BYTES // max(1, patch_bytes))
-        ceiling = 12 if preview else 24
-        num_variations = int(np.clip(affordable, 4, ceiling))
+    if num_variations is None:
+        # Wobble affects the alpha mask, not the pixels in a patch. Without
+        # random rotation every pixel patch is identical, so keeping several
+        # full-resolution copies wastes a prohibitive amount of memory.
+        num_variations, _ = _splat_variation_counts(
+            image, scale, rand_rot, preview)
 
     rng = np.random.RandomState(np.uint32(seed) & 0x7FFFFFFF)
 
@@ -271,7 +299,13 @@ def _build_patch_bank(image: np.ndarray, scale: float, rotation: float,
 
     for i in range(num_variations):
         angle = rotation
-        if rand_rot >= 0.01 and num_variations > 1:
+        if rand_rot >= 0.01:
+            # Apply a sampled deviation even when the memory budget permits
+            # only one patch.  Previously that fallback skipped this branch,
+            # so large images could clamp the bank to one variation and make
+            # the Random Rotation control look completely inert.  The seed
+            # keeps the single-patch fallback deterministic while the slider
+            # still changes its appearance.
             angle += rng.uniform(-180.0, 180.0) * rand_rot
 
         if abs(angle) > 0.05:
@@ -334,6 +368,25 @@ def _splat_placements(target_h: int, target_w: int, patch_h: int, patch_w: int,
     return np.ascontiguousarray(coords[order]), np.ascontiguousarray(indices[order])
 
 
+def _stream_patch_batches(source, variation_count, coords, indices, scale, rotation,
+                          rand_rot, wobble, falloff, seed, preview):
+    """Yield one (selected_coords, local_indices, patch_batch, mask_batch)
+    tuple per non-empty patch variation, shared by the GPU and CPU
+    streamed-accumulation branches of synthesis_splat so they build
+    identical per-variation batches from a single code path."""
+    for variation in range(variation_count):
+        selected = np.ascontiguousarray(coords[indices == variation])
+        if not len(selected):
+            continue
+        variation_seed = int(seed) + variation * 7919
+        patch_batch, mask_batch = _build_patch_bank(
+            source, scale=scale, rotation=rotation, rand_rot=rand_rot,
+            wobble=wobble, falloff=falloff, seed=variation_seed,
+            preview=preview, num_variations=1)
+        local_indices = np.zeros(len(selected), dtype=np.int32)
+        yield selected, local_indices, patch_batch, mask_batch
+
+
 def synthesis_splat(image: np.ndarray, new_size: tuple = (1024, 1024),
                     grid_size: int = 8, scale: float = 1.0,
                     rotation: float = 0, rand_rot: float = 0,
@@ -366,37 +419,101 @@ def synthesis_splat(image: np.ndarray, new_size: tuple = (1024, 1024),
 
     # Base canvas, only ever seen where no patch lands (see splat_resolve_jit).
     src_h, src_w = source.shape[:2]
-    reps_y = target_h // src_h + 2
-    reps_x = target_w // src_w + 2
-    fallback = np.ascontiguousarray(
-        np.tile(source, (reps_y, reps_x, 1))[:target_h, :target_w])
+    if (src_h, src_w) == (target_h, target_w):
+        # This is the normal SeamlessProcessor path. Reusing the source
+        # avoids a second 768MB float32 canvas at 8192x8192.
+        fallback = source
+    else:
+        reps_y = target_h // src_h + 2
+        reps_x = target_w // src_w + 2
+        fallback = np.ascontiguousarray(
+            np.tile(source, (reps_y, reps_x, 1))[:target_h, :target_w])
 
     preview = target_h <= 384 and target_w <= 384
 
+    stored_variations, desired_variations = _splat_variation_counts(
+        source, scale, rand_rot, preview)
+    stream_variations = cached_batches is None and desired_variations > stored_variations
+
     if cached_batches is not None:
         patches, masks = cached_batches
+        variation_count = patches.shape[0]
+    elif stream_variations:
+        patches = masks = None
+        variation_count = desired_variations
     else:
         patches, masks = _build_patch_bank(
             source, scale=scale, rotation=rotation, rand_rot=rand_rot,
             wobble=wobble, falloff=falloff, seed=seed, preview=preview)
+        variation_count = patches.shape[0]
 
-    patch_h, patch_w = patches.shape[1:3]
+    if patches is None:
+        patch_w = max(8, int(round(source.shape[1] * scale)))
+        patch_h = max(8, int(round(source.shape[0] * scale)))
+    else:
+        patch_h, patch_w = patches.shape[1:3]
     coords, indices = _splat_placements(
-        target_h, target_w, patch_h, patch_w, patches.shape[0], seed)
+        target_h, target_w, patch_h, patch_w, variation_count, seed)
 
-    channels = patches.shape[3]
-    accum = np.zeros((target_h, target_w, channels), dtype=np.float32)
-    weight = np.zeros((target_h, target_w), dtype=np.float32)
+    channels = source.shape[2]
+    num_splats = coords.shape[0]
 
-    splat_accumulate_jit(accum, weight,
-                         np.ascontiguousarray(patches),
-                         np.ascontiguousarray(masks),
-                         coords, indices)
+    # GPU (NVIDIA, via Numba CUDA) is only worth dispatching to above a
+    # work-volume threshold and never for live-preview canvases -- see
+    # materialize_methods_cuda.gpu_eligible. Any failure past this point
+    # (including mid-render) falls back to the CPU path below and marks the
+    # GPU broken for the rest of the process, same defensive style as
+    # gpu_utils.GPUAccelerator.
+    use_gpu = materialize_methods_cuda.gpu_eligible(
+        num_splats=num_splats, patch_h=patch_h, patch_w=patch_w, preview=preview)
 
-    result = np.empty_like(accum)
-    splat_resolve_jit(accum, weight, fallback, result)
+    if use_gpu:
+        try:
+            session = materialize_methods_cuda.SplatCudaSession(target_h, target_w, channels)
+            if stream_variations:
+                for selected, local_indices, patch_batch, mask_batch in _stream_patch_batches(
+                        source, variation_count, coords, indices, scale, rotation,
+                        rand_rot, wobble, falloff, seed, preview):
+                    session.accumulate(patch_batch, mask_batch, selected, local_indices)
+            else:
+                session.accumulate(np.ascontiguousarray(patches),
+                                   np.ascontiguousarray(masks), coords, indices)
+            result = session.resolve(np.ascontiguousarray(fallback), np.empty_like(fallback))
+        except Exception as exc:
+            logger.debug("Splat GPU accumulate failed, falling back to CPU: %s", exc)
+            materialize_methods_cuda.mark_broken()
+            use_gpu = False
+
+    if not use_gpu:
+        accum = np.zeros((target_h, target_w, channels), dtype=np.float32)
+        weight = np.zeros((target_h, target_w), dtype=np.float32)
+        num_bands = max(1, min(target_h, numba.get_num_threads()))
+
+        if stream_variations:
+            # Full-resolution photographs can have 40+ MB patches, so storing
+            # all 24 random rotations would be needlessly expensive. Generate
+            # and accumulate one variation at a time instead. This makes the
+            # settled full-quality render match the randomized live preview
+            # without ever holding a large patch bank in memory.
+            for selected, local_indices, patch_batch, mask_batch in _stream_patch_batches(
+                    source, variation_count, coords, indices, scale, rotation,
+                    rand_rot, wobble, falloff, seed, preview):
+                splat_accumulate_parallel_jit(accum, weight, patch_batch, mask_batch,
+                                              selected, local_indices, num_bands)
+        else:
+            splat_accumulate_parallel_jit(accum, weight,
+                                          np.ascontiguousarray(patches),
+                                          np.ascontiguousarray(masks),
+                                          coords, indices, num_bands)
+
+        # Resolving pixel-by-pixel is safe in place: each output location only
+        # reads its own accumulator value. This removes another full-size float
+        # canvas (768MB for an 8K RGB texture).
+        splat_resolve_jit(accum, weight, fallback, accum)
+        result = accum
 
     if grayscale:
         result = result[:, :, 0]
 
-    return np.clip(result, 0, 255), (patches, masks)
+    np.clip(result, 0, 255, out=result)
+    return result, None if stream_variations else (patches, masks)

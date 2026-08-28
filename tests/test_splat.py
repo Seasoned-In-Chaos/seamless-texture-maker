@@ -1,4 +1,5 @@
 """Tests for splat synthesis."""
+import numba
 import numpy as np
 import pytest
 
@@ -8,7 +9,22 @@ from app.core.materialize_methods import (
     _build_patch_bank,
     _splat_placements,
 )
-from app.core.materialize_methods_jit import splat_accumulate_jit
+import app.core.materialize_methods as materialize_methods
+import app.core.materialize_methods_cuda as materialize_methods_cuda
+from app.core.gpu_utils import is_numba_cuda_available
+from app.core.materialize_methods_jit import (
+    splat_accumulate_jit,
+    splat_accumulate_parallel_jit,
+    splat_resolve_jit,
+)
+
+
+@pytest.fixture
+def force_cpu_splat(monkeypatch):
+    """Force synthesis_splat onto the CPU path regardless of GPU threshold
+    tuning or whether this happens to run on a CUDA-enabled machine, so
+    exact-equality tests stay meaningful either way."""
+    monkeypatch.setattr(materialize_methods_cuda, "gpu_eligible", lambda **kw: False)
 
 
 def _make_source(size: int = 128) -> np.ndarray:
@@ -61,7 +77,44 @@ class TestSplat:
                                     scale=1.0, falloff=0.2)
         assert result.dtype == np.float32
 
-    def test_splat_deterministic(self):
+    def test_patch_bank_never_exceeds_budget_with_forced_variations(self, monkeypatch):
+        """An 8K-scale patch may be larger than the whole bank budget.
+
+        It must still synthesize with one variation rather than forcing four
+        large copies and exhausting memory before the algorithm starts.
+        """
+        monkeypatch.setattr(materialize_methods, "_PATCH_BANK_BUDGET_BYTES", 1)
+        patches, masks = _build_patch_bank(
+            _make_source(64), scale=1.0, rotation=0.0, rand_rot=1.0,
+            wobble=0.2, falloff=0.2, seed=0, preview=False,
+        )
+        assert patches.shape[0] == masks.shape[0] == 1
+
+    def test_random_rotation_affects_single_patch_fallback(self, monkeypatch):
+        """Large splats may fit only one patch, but rotation must still work."""
+        monkeypatch.setattr(materialize_methods, "_PATCH_BANK_BUDGET_BYTES", 1)
+        source = _make_source(64)
+        low, _ = synthesis_splat(
+            source, new_size=(64, 64), scale=1.0, rotation=0.0,
+            rand_rot=0.1, wobble=0.2, falloff=0.2, seed=0,
+        )
+        high, _ = synthesis_splat(
+            source, new_size=(64, 64), scale=1.0, rotation=0.0,
+            rand_rot=1.0, wobble=0.2, falloff=0.2, seed=0,
+        )
+        assert not np.allclose(low, high)
+
+    def test_random_rotation_streams_when_full_bank_would_be_too_large(self, monkeypatch):
+        """Memory-limited final renders keep multiple random orientations."""
+        monkeypatch.setattr(materialize_methods, "_PATCH_BANK_BUDGET_BYTES", 1)
+        result, batches = synthesis_splat(
+            _make_source(64), new_size=(512, 512), scale=1.0,
+            rotation=0.0, rand_rot=1.0, wobble=0.2, falloff=0.2, seed=0,
+        )
+        assert batches is None
+        assert result.shape == (512, 512, 3)
+
+    def test_splat_deterministic(self, force_cpu_splat):
         np.testing.assert_array_equal(_run(), _run())
 
     def test_grayscale_round_trips(self):
@@ -108,11 +161,17 @@ class TestSplat:
 
 class TestSplatCoverage:
     # Any pixel no patch reaches falls back to the (non-seamless) source,
-    # which would both show as an artefact and break tiling.
+    # which would both show as an artefact and break tiling. Parametrized
+    # over both the serial and prange-parallel accumulate kernels -- full
+    # coverage is a correctness property that must hold for either.
     @pytest.mark.parametrize("scale", [0.15, 0.45, 0.9])
     @pytest.mark.parametrize("wobble", [0.0, 1.0])
     @pytest.mark.parametrize("falloff", [0.0, 1.0])
-    def test_full_coverage(self, scale, wobble, falloff):
+    @pytest.mark.parametrize("accumulate_fn,extra_args", [
+        (splat_accumulate_jit, ()),
+        (splat_accumulate_parallel_jit, (numba.get_num_threads(),)),
+    ], ids=["serial", "parallel"])
+    def test_full_coverage(self, scale, wobble, falloff, accumulate_fn, extra_args):
         img = _make_source(96)
         patches, masks = _build_patch_bank(img, scale=scale, rotation=0.0,
                                            rand_rot=1.0, wobble=wobble,
@@ -123,8 +182,133 @@ class TestSplatCoverage:
                                             patches.shape[0], 0)
         accum = np.zeros((96, 96, 3), dtype=np.float32)
         weight = np.zeros((96, 96), dtype=np.float32)
-        splat_accumulate_jit(accum, weight, patches, masks, coords, indices)
+        accumulate_fn(accum, weight, patches, masks, coords, indices, *extra_args)
         assert np.count_nonzero(weight < 1e-9) == 0
+
+
+class TestSplatAccumulateParallel:
+    """splat_accumulate_parallel_jit must match splat_accumulate_jit (kept
+    unchanged as the serial reference oracle) for any band count."""
+
+    def _reference_and_parallel(self, canvas, patches, masks, coords, indices, num_bands):
+        h, w = canvas
+        c = patches.shape[-1]
+        accum_s = np.zeros((h, w, c), dtype=np.float32)
+        weight_s = np.zeros((h, w), dtype=np.float32)
+        splat_accumulate_jit(accum_s, weight_s, patches, masks, coords, indices)
+
+        accum_p = np.zeros((h, w, c), dtype=np.float32)
+        weight_p = np.zeros((h, w), dtype=np.float32)
+        splat_accumulate_parallel_jit(accum_p, weight_p, patches, masks,
+                                      coords, indices, num_bands)
+        return (accum_s, weight_s), (accum_p, weight_p)
+
+    @pytest.mark.parametrize("num_bands", [1, 2, 7, numba.get_num_threads()])
+    def test_matches_serial_baseline(self, num_bands):
+        source = _make_source(96)
+        patches, masks = _build_patch_bank(source, scale=0.4, rotation=0.0,
+                                           rand_rot=0.6, wobble=0.5, falloff=0.4,
+                                           seed=0, preview=True)
+        coords, indices = _splat_placements(96, 96, patches.shape[1], patches.shape[2],
+                                            patches.shape[0], seed=0)
+        (accum_s, weight_s), (accum_p, weight_p) = self._reference_and_parallel(
+            (96, 96), patches, masks, coords, indices, num_bands)
+        np.testing.assert_allclose(accum_p, accum_s, rtol=1e-4, atol=1e-3)
+        np.testing.assert_allclose(weight_p, weight_s, rtol=1e-4, atol=1e-3)
+
+    @pytest.mark.parametrize("num_bands", [1, 3, 8])
+    def test_matches_serial_with_wraparound(self, num_bands):
+        """Hand-crafted coords with top < 0 and top + ph > height, to
+        specifically exercise the row-band-vs-wraparound interaction."""
+        h, w, ph, pw = 32, 32, 20, 20
+        patches = np.random.default_rng(1).uniform(0, 255, (1, ph, pw, 3)).astype(np.float32)
+        masks = np.ones((1, ph, pw), dtype=np.float32)
+        coords = np.array([[-5, -5], [h - 3, w - 3], [0, 0], [15, 15]], dtype=np.int32)
+        indices = np.zeros(4, dtype=np.int32)
+        (accum_s, weight_s), (accum_p, weight_p) = self._reference_and_parallel(
+            (h, w), patches, masks, coords, indices, num_bands)
+        np.testing.assert_allclose(accum_p, accum_s, rtol=1e-5, atol=1e-4)
+        np.testing.assert_allclose(weight_p, weight_s, rtol=1e-5, atol=1e-4)
+
+    def test_resolve_matches_between_serial_and_parallel_accumulate(self):
+        """End-to-end: resolving each accumulate path's output must still
+        agree, not just the raw accum/weight buffers."""
+        source = _make_source(96)
+        patches, masks = _build_patch_bank(source, scale=0.4, rotation=0.0,
+                                           rand_rot=0.6, wobble=0.5, falloff=0.4,
+                                           seed=0, preview=True)
+        coords, indices = _splat_placements(96, 96, patches.shape[1], patches.shape[2],
+                                            patches.shape[0], seed=0)
+        (accum_s, weight_s), (accum_p, weight_p) = self._reference_and_parallel(
+            (96, 96), patches, masks, coords, indices, numba.get_num_threads())
+
+        fallback = source
+        out_s = np.empty_like(accum_s)
+        out_p = np.empty_like(accum_p)
+        splat_resolve_jit(accum_s, weight_s, fallback, out_s)
+        splat_resolve_jit(accum_p, weight_p, fallback, out_p)
+        np.testing.assert_allclose(out_p, out_s, rtol=1e-4, atol=1e-3)
+
+
+requires_cuda = pytest.mark.skipif(
+    not is_numba_cuda_available(),
+    reason="Numba CUDA (driver + NVVM + cudart) not available in this environment",
+)
+
+
+class TestSplatAccumulateGPU:
+    """SplatCudaSession must match the serial CPU oracle. Skips cleanly on
+    any machine without a working CUDA setup -- most CI/dev machines."""
+
+    @requires_cuda
+    def test_gpu_matches_cpu_serial_baseline(self):
+        from app.core.materialize_methods_cuda import SplatCudaSession, warmup_cuda_kernels
+        assert warmup_cuda_kernels()
+
+        source = _make_source(96)
+        patches, masks = _build_patch_bank(source, scale=0.4, rotation=0.0,
+                                           rand_rot=0.6, wobble=0.5, falloff=0.4,
+                                           seed=0, preview=True)
+        coords, indices = _splat_placements(96, 96, patches.shape[1], patches.shape[2],
+                                            patches.shape[0], seed=0)
+        accum_s = np.zeros((96, 96, 3), dtype=np.float32)
+        weight_s = np.zeros((96, 96), dtype=np.float32)
+        splat_accumulate_jit(accum_s, weight_s, patches, masks, coords, indices)
+
+        session = SplatCudaSession(96, 96, 3)
+        session.accumulate(patches, masks, coords, indices)
+        gpu_accum = session.accum_d.copy_to_host()
+        gpu_weight = session.weight_d.copy_to_host()
+
+        # Looser tolerance than CPU-vs-CPU: GPU atomics resolve contributions
+        # in a hardware-scheduled, non-deterministic order, so this is a
+        # numerically-equivalent check, not an order-preserving one.
+        np.testing.assert_allclose(gpu_accum, accum_s, rtol=1e-3, atol=1e-2)
+        np.testing.assert_allclose(gpu_weight, weight_s, rtol=1e-3, atol=1e-2)
+
+    @requires_cuda
+    def test_gpu_resolve_matches_cpu(self):
+        from app.core.materialize_methods_cuda import SplatCudaSession, warmup_cuda_kernels
+        assert warmup_cuda_kernels()
+
+        source = _make_source(96)
+        patches, masks = _build_patch_bank(source, scale=0.4, rotation=0.0,
+                                           rand_rot=0.6, wobble=0.5, falloff=0.4,
+                                           seed=0, preview=True)
+        coords, indices = _splat_placements(96, 96, patches.shape[1], patches.shape[2],
+                                            patches.shape[0], seed=0)
+        accum_s = np.zeros((96, 96, 3), dtype=np.float32)
+        weight_s = np.zeros((96, 96), dtype=np.float32)
+        splat_accumulate_jit(accum_s, weight_s, patches, masks, coords, indices)
+        out_s = np.empty_like(accum_s)
+        splat_resolve_jit(accum_s, weight_s, source, out_s)
+
+        session = SplatCudaSession(96, 96, 3)
+        session.accumulate(patches, masks, coords, indices)
+        out_g = session.resolve(np.ascontiguousarray(source),
+                                np.empty((96, 96, 3), dtype=np.float32))
+
+        np.testing.assert_allclose(out_g, out_s, rtol=1e-3, atol=1e-2)
 
 
 class TestSplatMask:

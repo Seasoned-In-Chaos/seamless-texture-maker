@@ -30,6 +30,7 @@ A powerful desktop application for creating perfectly seamless textures and PBR 
 ### Performance & Export Pipelines
 - **Texture & Map Export** - Save the seamless texture or any individual PBR map (Base Color, Normal, Roughness, AO, Displacement, Opacity) via quick-save, save-as, or per-map export.
 - **Numba JIT Acceleration** - JIT-compiled hot paths for heavy map generation, warmed up in the background at startup.
+- **GPU Acceleration (NVIDIA)** - The Splat method's hottest loop runs on the GPU via Numba CUDA when an NVIDIA GPU is available, with an automatically-parallelized multi-core CPU fallback everywhere else.
 - **Multi-threaded Architecture** - Background processing keeps the UI fully responsive.
 - **Result Caching** - LRU cache with pipeline and PBR buckets avoids redundant recomputation.
 
@@ -73,7 +74,7 @@ build_store.bat
 ```
 
 The build produces:
-- **Standard build**: Single-file EXE via PyInstaller + Inno Setup installer (~131 MB)
+- **Standard build**: Single-file EXE via PyInstaller + Inno Setup installer (~151 MB, including the bundled NVIDIA CUDA redistributables for GPU-accelerated Splat -- see Technical Details)
 - **Store build**: One-directory build for MSIX packaging
 
 ## Usage
@@ -108,10 +109,11 @@ seamless-texture-maker/
 │   │   ├── delighting.py        # Delighting algorithm
 │   │   ├── normal_generator.py  # PBR map generation (Normal, Roughness, AO, Displacement, Opacity)
 │   │   ├── materialize_methods.py    # Materialize (Python)
-│   │   ├── materialize_methods_jit.py # Materialize (Numba JIT)
+│   │   ├── materialize_methods_jit.py # Materialize (Numba JIT, CPU parallel)
+│   │   ├── materialize_methods_cuda.py # Materialize (Numba CUDA, NVIDIA GPU)
 │   │   ├── offset_mapping.py    # Offset mapping
 │   │   ├── texture_mipmaps.py   # Viewport mipmap generation
-│   │   ├── gpu_utils.py         # GPU detection (inactive -- see Technical Details)
+│   │   ├── gpu_utils.py         # GPU detection -- see Technical Details
 │   │   ├── cache.py             # LRU result cache
 │   │   ├── assertions.py        # Runtime assertions
 │   │   └── exceptions.py        # Custom exceptions
@@ -157,9 +159,13 @@ seamless-texture-maker/
 
 Each seamless method uses its own vectorized, numpy-based feathering rather than a plain Gaussian blur (which destroys edge detail): Offset + Cross-Fade uses a linear falloff from the center seam, while Overlap and Splat use smoothstep-based masks tuned to avoid ghosting on high-detail content. No per-pixel Python loops are involved.
 
-### GPU Acceleration (currently inactive)
+### GPU Acceleration
 
-`gpu_utils.py` provides CUDA detection and a `GPUAccelerator` wrapper (resize, Gaussian blur, alpha blend, inpaint) with automatic CPU fallback on any failure. It isn't wired into the processing pipeline today because the pinned `opencv-python-headless` package ships without CUDA support compiled in — `is_cuda_available()` returns `False` on every install regardless of the user's GPU. Enabling this for real would require switching to a CUDA-enabled OpenCV build and re-verifying on real hardware; everything currently ships on CPU/Numba, which is fast enough that this hasn't been a priority.
+**Splat (NVIDIA, active):** The Splat method's hottest loop — scattering rotated patches onto the canvas and resolving the weighted-average blend — runs on the GPU via Numba's `@cuda.jit` (`materialize_methods_cuda.py`) whenever a working NVIDIA CUDA setup is detected (`is_numba_cuda_available()` in `gpu_utils.py`). The `nvidia-cuda-nvcc-cu12` / `nvidia-cuda-runtime-cu12` packages bundle just enough of the CUDA toolchain (NVVM and the CUDA Runtime) that end users never need to install NVIDIA's full CUDA Toolkit themselves; `gpu_utils._ensure_cuda_home()` points Numba at them automatically, whether running from source or from the packaged EXE. GPU dispatch only kicks in above a work-volume threshold and never for live-preview canvases, since kernel-launch and transfer overhead isn't worth it below that — see `gpu_eligible()` in `materialize_methods_cuda.py`. Any failure at any point (no NVIDIA GPU, driver issue, out of memory) falls back to CPU and is never retried for the rest of the session, the same defensive pattern `GPUAccelerator` below already uses. Bundling NVVM adds roughly 20MB to the installer, paid regardless of the end user's own GPU vendor since there's no clean way to make a PyInstaller build conditional on the machine that will eventually run it.
+
+**Splat (CPU fallback, always active):** Every machine without a working CUDA setup — AMD, Intel, integrated, or no GPU at all — instead gets a `numba.prange`-parallelized version of the same kernel (`splat_accumulate_parallel_jit` in `materialize_methods_jit.py`), which partitions the canvas into row bands processed concurrently across all CPU cores rather than the single-threaded loop this used to be.
+
+**OpenCV path (inactive):** `GPUAccelerator` (resize, Gaussian blur, alpha blend, inpaint) still has automatic CPU fallback on any failure, but stays unreachable in practice: the pinned `opencv-python-headless` package ships without CUDA support compiled in, so `is_cuda_available()` (the OpenCV-specific check, distinct from `is_numba_cuda_available()` above) returns `False` on every install regardless of the user's GPU. Enabling this path for real would require switching to a CUDA-enabled OpenCV build and re-verifying on real hardware; every other seamless method and PBR channel ships on CPU (numpy/OpenCV, both already internally multi-threaded) or Numba, which is fast enough that this hasn't been a priority.
 
 ### Live Preview System
 

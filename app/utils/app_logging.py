@@ -64,6 +64,12 @@ def setup_logging() -> logging.Logger:
             logger.info("OpenCV CUDA: %d devices", cv2.cuda.getCudaEnabledDeviceCount())
         except Exception:
             logger.info("OpenCV CUDA: not available")
+        try:
+            from ..core.gpu_utils import is_numba_cuda_available
+            logger.info("Numba CUDA (Splat GPU path): %s",
+                        "available" if is_numba_cuda_available() else "not available")
+        except Exception:
+            logger.info("Numba CUDA (Splat GPU path): not available")
     except Exception:
         pass
 

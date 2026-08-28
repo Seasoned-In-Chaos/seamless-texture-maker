@@ -54,18 +54,11 @@ blend_width = image_height × overlap_y  (vertical)
 
 For a 2048×2048 image at 20% overlap, that's a 410-pixel blend strip on each axis.
 
-## Chunked Processing
+## Large Images
 
-For images larger than 2048px, SEAMS automatically:
+Overlap Blend always processes the complete source image, including at 4K and above. Its result depends on the relationship between the source's true opposite edges, so splitting it into independent chunks would introduce internal joins and prevent the output from being one seamless tile.
 
-1. Splits the image into 1024×1024 tiles with 64px overlap
-2. Processes each tile independently
-3. Reassembles with linear gradient blending at tile boundaries
-4. Applies 2D corner fade: `fade = fade_y × fade_x` to eliminate corner artifacts
-
-<Note>
-Chunked processing runs automatically — there are no user controls for tile size or overlap. It triggers for any image where `max(width, height) > 2048`.
-</Note>
+Very large images can therefore take longer and need more memory. There are no chunk-size controls for Overlap Blend.
 
 ## Live Preview
 

@@ -1,7 +1,12 @@
 import cv2
 import numpy as np
 
-from app.core.gpu_utils import is_cuda_available, get_gpu_info, GPUAccelerator
+from app.core.gpu_utils import (
+    is_cuda_available,
+    get_gpu_info,
+    GPUAccelerator,
+    is_numba_cuda_available,
+)
 
 
 class TestCudaDetection:
@@ -11,6 +16,15 @@ class TestCudaDetection:
     def test_get_gpu_info_is_none_when_cuda_unavailable(self):
         if not is_cuda_available():
             assert get_gpu_info() is None
+
+
+class TestNumbaCudaDetection:
+    """Numba/NVVM CUDA-kernel subsystem, used by the Splat GPU path in
+    materialize_methods_cuda.py -- separate from is_cuda_available() above
+    (OpenCV's CUDA module), which stays always-False per the class below."""
+
+    def test_is_numba_cuda_available_returns_bool(self):
+        assert isinstance(is_numba_cuda_available(), bool)
 
 
 class TestGPUAcceleratorFallback:

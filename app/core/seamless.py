@@ -8,15 +8,12 @@ from .gpu_utils import is_cuda_available
 from .cache import ResultCache, hash_image, make_pipeline_key
 from .exceptions import ProcessingError, ImageLoadError
 
-# Chunked processing splits the image into tiles, each handled by a brand
-# new SeamlessProcessor with an empty cache -- for Splat in particular this
-# means the (expensive) rotated-patch bank gets rebuilt once per tile
-# instead of once total, which made chunking *slower* than a single pass
-# at exactly the sizes it was meant to help (measured: a 4000px image was
-# ~3-4x slower chunked than not, at the old 2048px threshold). A 4K image
-# is a trivial ~192MB as a single float32 array, so there's no real memory
-# pressure to guard against until well past that; only genuinely large
-# images (bigger than 4K, up to the 8192px import cap) still chunk.
+# The legacy chunk helper remains available for explicit callers, but no
+# seamless method may be auto-chunked. Every method needs one global canvas:
+# Mirror reflects the actual outer edges; Offset + Cross-Fade has one global
+# center seam; Overlap reads opposite edges; and Splat has one periodic patch
+# layout. Processing independent crops breaks those relationships, which is
+# especially visible on 4K images as rectangular internal seams.
 _CHUNK_THRESHOLD_PX = 4096
 
 class SeamlessProcessor:
@@ -180,7 +177,8 @@ class SeamlessProcessor:
                 "Apply Delight" actually commits instead of being obscured
                 by tiling/blend artifacts from the seamless method.
             use_cache (bool): If True, check/store result in cache (default True).
-            chunked (bool): If True, auto-select chunked path for large images.
+            chunked (bool): Retained for API compatibility. Seamless methods
+                always use one global processing pass.
 
         Returns:
             Processed seamless texture
@@ -196,20 +194,11 @@ class SeamlessProcessor:
         if self._original_image is None:
             raise ProcessingError("No image loaded. Call load_image() first.")
 
-        # Auto-select chunked path for large images
-        h, w = self._original_image.shape[:2]
-        if self.method == 'mirror' and max(h, w) > 4096:
-            raise ProcessingError(
-                "Mirror Tiling doubles both dimensions; use an input up to 4096px "
-                "or choose another seamless method."
-            )
-        # A mirror tile intentionally produces a 2x2 canvas, so splitting the
-        # source into independent chunks would destroy the exact reflection
-        # at its four outer edges.  The offset cross-fade also needs one
-        # global center seam.  Keep both methods on their full-image path.
-        if (chunked and not preview and max(h, w) > _CHUNK_THRESHOLD_PX
-                and self.method not in {'mirror', 'offset_crossfade'} and not delight_only):
-            return self.run_pipeline_chunked(self._original_image, chunk_size=2048, overlap=64)
+        # Do not split high-resolution inputs into local processing tiles.
+        # All seamless algorithms depend on a single global relationship:
+        # Splat's periodic patch layout is just as global as Overlap's
+        # opposite-edge blend. Chunking either one leaves visible rectangular
+        # regions in the final tiled preview.
 
         # Check cache (both preview and full-res when use_cache is True).
         # Skipped for delight_only requests: the cache key doesn't encode
@@ -342,9 +331,13 @@ class SeamlessProcessor:
             seed=int(self.splat_randomize),
         )
 
-        # Store in cache if newly generated
-        if cached_batches is None:
-            self._splat_cache[cache_key] = batches
+        # Store in cache if newly generated. Full-resolution 8K patches can
+        # each be hundreds of MB, so retaining them across slider changes
+        # would defeat the memory reductions in synthesis_splat.
+        if cached_batches is None and batches is not None:
+            batch_bytes = sum(batch.nbytes for batch in batches)
+            if batch_bytes <= 64 * 1024 * 1024:
+                self._splat_cache[cache_key] = batches
             # Simple LRU eviction
             if len(self._splat_cache) > 8:
                 try:
@@ -770,6 +763,23 @@ def precompile_jit_functions():
         logger.info("precompile splat_jit: %.1f ms", timings["splat_jit"])
     except Exception as exc:
         logger.warning("precompile splat_jit failed: %s", exc)
+
+    # -- Splat Synthesis CUDA (optional NVIDIA GPU path) --------------------
+    # No-ops (returns False almost instantly) on the vast majority of
+    # machines, which have no working Numba CUDA+NVVM stack -- only a
+    # machine with a real CUDA GPU pays the (expensive) NVVM compile here,
+    # front-loaded during the splash screen instead of a user's first
+    # full-res Splat render.
+    try:
+        from .materialize_methods_cuda import warmup_cuda_kernels
+
+        t0 = time.perf_counter()
+        gpu_ready = warmup_cuda_kernels()
+        timings["splat_cuda"] = (time.perf_counter() - t0) * 1000.0
+        logger.info("precompile splat_cuda: %.1f ms (gpu_ready=%s)",
+                     timings["splat_cuda"], gpu_ready)
+    except Exception as exc:
+        logger.warning("precompile splat_cuda failed: %s", exc)
 
     # -- Mirror Tiling (2x2) and Offset + Cross-Fade -----------------------
     try:

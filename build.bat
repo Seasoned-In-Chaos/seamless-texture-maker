@@ -2,25 +2,35 @@
 setlocal enabledelayedexpansion
 
 :: ── Configuration ──────────────────────────────────────────────────────
-set "PY_VER=3.11+"
+set "PY_VER=3.12"
 set "VENV_DIR=.venv-build"
 
-for /f "tokens=*" %%v in ('python -c "import sys; sys.path.insert(0, '.'); from app.utils.config import APP_VERSION; print(APP_VERSION)" 2^>nul') do set "APP_VER=%%v"
+:: ── Step 1: Find Python ────────────────────────────────────────────
+echo [1/6] Finding Python...
+set "PY_EXE="
+
+if exist "%LOCALAPPDATA%\Programs\Python\Python312\python.exe" set "PY_EXE=%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
+
+if not defined PY_EXE (
+    for /f "tokens=*" %%p in ('py -3.12 -c "import sys; print(sys.executable)" 2^>nul') do set "PY_EXE=%%p"
+)
+
+if not defined PY_EXE (
+    for /f "tokens=*" %%p in ('python -c "import sys; print(sys.executable)" 2^>nul') do set "PY_EXE=%%p"
+)
+
+if not defined PY_EXE (
+    echo [ERROR] Python %PY_VER% not found!
+    exit /b 1
+)
+
+for /f "tokens=*" %%v in ('"%PY_EXE%" -c "import sys; sys.path.insert(0, '.'); from app.utils.config import APP_VERSION; print(APP_VERSION)" 2^>nul') do set "APP_VER=%%v"
 if not defined APP_VER set "APP_VER=unknown"
 
 echo ========================================
 echo  SEAMS v%APP_VER% - Production Build
 echo ========================================
 echo.
-
-:: ── Step 1: Find Python ────────────────────────────────────────────
-echo [1/6] Finding Python...
-for /f "tokens=*" %%p in ('python -c "import sys; print(sys.executable)"') do set "PY_EXE=%%p"
-
-if not defined PY_EXE (
-    echo [ERROR] Python not found!
-    exit /b 1
-)
 echo [OK] Python: %PY_EXE%
 echo.
 
