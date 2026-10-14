@@ -7,6 +7,10 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [4.0.0] - 2026-10-14
+
+SEAMS is rewritten in Rust. The Python/PyQt6 application is gone; the four seamless methods, delighting and the five PBR maps are ported with the same algorithms and defaults.
+
 ### Added
 - A Crop tool (`C`, Edit › Crop, or the crop button in the view bar), after Photoshop's Classic Mode. Drag inside the untouched frame to draw a new one, inside a frame to move it, on an edge or corner to resize it, and outside it to turn it. Shift keeps proportions (or snaps the turn to 15°), Alt works from the centre. The inspector sets an aspect ratio (free, original, 1:1, 4:3, 3:4, 16:9, 9:16, 2:1), the exact size and the angle. Enter applies and Esc cancels; applying is undoable. An upright crop copies pixels exactly; a turned one is resampled, repeating edge pixels where it reaches past the image.
 - Perspective crop (`Shift+C`, Edit › Perspective crop, or Mode › Perspective in the Crop tool), after Photoshop's Perspective Crop tool. Drag each corner onto a corner of a surface shot at an angle; applying straightens it into a rectangle. Edges move both their corners, the inside moves the whole shape, and a grid follows the perspective. A move that would fold the shape inward is refused. The result size is measured from the edges unless set.
@@ -19,36 +23,6 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - `Ctrl+Q` exits. Redo is `Ctrl+Shift+Z`, as in Photoshop; `Ctrl+Y` still works.
 - Keyboard focus rings on toggles, segmented controls, checkboxes and the primary button.
 - A last-resort guard around every menu, button and shortcut action: an unexpected failure is reported in the status bar instead of closing the window.
-
-### Changed
-- A plain left drag no longer moves the view, as in Photoshop: pan with the pan tool (`H`), by holding `Space`, or with the middle button.
-- Panning stops at the image: a large image cannot be dragged past its edges, and a small one stays inside the window, as in Photoshop.
-- The scroll wheel zooms in exact 10% steps on each notch, without drifting on after the wheel stops. Shift + wheel scrolls sideways, Alt + wheel scrolls up and down, and a pinch or Ctrl + wheel zooms. A middle-button drag always pans.
-- The stage switcher, the map thumbnails, the image and the view bar share one centre line over the canvas.
-- Tile guides are dashed.
-- Slider values are drawn in the secondary text colour, so labels lead. Spacing in the inspector and dialogs follows the 4 px scale.
-- `Ctrl+=`, `Ctrl+-` and `Ctrl+0` no longer rescale the whole interface.
-
-### Fixed
-- Results are cached under a hash of every pixel. The hash used to sample about 1,300 pixels, so opening a texture of the same size that differed only in a small area could reuse, and export, the previous texture's result.
-- Perspective crop: a drag just outside the region no longer replaces corners placed by hand, and corners grab from a little further out.
-- The Crop tool closes when another texture is opened, so a frame drawn for one texture cannot crop the next.
-- Esc closing a dropdown in the Crop tool no longer cancels the crop.
-- Two SEAMS windows saving settings at the same moment no longer collide on one temporary file.
-- Crop: pressing on a corner and pulling outward turned the frame instead of resizing it. A gesture now acts on what was under the pointer when the button went down, and corners grab from a little further out.
-- `Shift` + a letter shortcut no longer fires while typing in a value field.
-- The application icon and version information were missing from `SEAMS.exe` when the project folder's path contained a space.
-- The status bar shows the base color's current size, not the size it was opened at.
-- Delight: Highlight reduction and AO removal no longer also lift shadows. Each of Shadow removal, Highlight reduction and AO removal now acts only on its own part of the lighting.
-- Delight: Contrast recovery no longer brings back the shadows that Shadow removal took out.
-- Delight: Color preservation now keeps lifted shadows saturated instead of only undoing Flatness. On its own it changes nothing, so Apply stays off.
-- Delight: Edge consistency and Detail are sized relative to the image, so they are visible on large textures and the live preview matches the full-resolution result.
-
-## [4.0.0] - 2026-10-10
-
-SEAMS is rewritten in Rust. The Python/PyQt6 application is gone; the four seamless methods, delighting and the five PBR maps are ported with the same algorithms and defaults.
-
-### Added
 - A native Rust application: a Cargo workspace of `seams-core` (processing), `seams-io` (files), `seams-engine` (document, pipeline, workers, settings) and the `seams` egui app.
 - TGA and EXR in the export format list, alongside PNG, JPG and TIFF.
 - Sixteen-bit export for 16-bit sources in PNG and TIFF. Previously every base colour was written at 8 bits.
@@ -58,6 +32,13 @@ SEAMS is rewritten in Rust. The Python/PyQt6 application is gone; the four seaml
 - Live previews on the GPU (`seams-gpu`, wgpu on DirectX 12, Vulkan or Metal): the five material maps and the seamless result for offset cross-fade, mirror tiling and overlap blend follow a slider at full resolution. Export still uses the CPU code, and tests hold the two within one 8-bit step. Splat synthesis, delighting, images beyond the GPU's limits and machines without a usable GPU are previewed on the CPU; `SEAMS_CPU_PREVIEW=1` forces that. Help › About shows which is in use.
 
 ### Changed
+- A plain left drag no longer moves the view, as in Photoshop: pan with the pan tool (`H`), by holding `Space`, or with the middle button.
+- Panning stops at the image: a large image cannot be dragged past its edges, and a small one stays inside the window, as in Photoshop.
+- The scroll wheel zooms in exact 10% steps on each notch, without drifting on after the wheel stops. Shift + wheel scrolls sideways, Alt + wheel scrolls up and down, and a pinch or Ctrl + wheel zooms. A middle-button drag always pans.
+- The stage switcher, the map thumbnails, the image and the view bar share one centre line over the canvas.
+- Tile guides are dashed.
+- Slider values are drawn in the secondary text colour, so labels lead. Spacing in the inspector and dialogs follows the 4 px scale.
+- `Ctrl+=`, `Ctrl+-` and `Ctrl+0` no longer rescale the whole interface.
 - The interface is redesigned to be quiet and monochrome: one top bar with the menus and the workflow stage, a view bar floating over the canvas, one inspector for the current stage with export pinned below it, a map strip under the canvas, and a status bar. Controls are a tone on their surface with a one-pixel outline. One accent colour, a light primary button, one small corner-radius scale, sentence-case labels, and an empty state that asks for a texture. Text is Geist and Geist Mono, fitted to the pixel grid so it stays sharp at 100% display scale. Hover and selection changes are animated. Images show exact pixels when enlarged.
 - Whether a quick save writes a new file or replaces the original is now a File menu option.
 - The standalone executable is about 19 MB, down from about 198 MB.
@@ -73,6 +54,21 @@ SEAMS is rewritten in Rust. The Python/PyQt6 application is gone; the four seaml
 - The decorative "Seam Intelligence" and "Light Field Analysis" graphs, which did not analyse the image.
 - The Output Type, Bit Depth and "Keep color temperature" controls in Delight, which had no effect.
 - The CPU, memory and GPU readout in the status bar, the animated splash screen and the illustrated credits page.
+
+### Fixed
+- Results are cached under a hash of every pixel. The hash used to sample about 1,300 pixels, so opening a texture of the same size that differed only in a small area could reuse, and export, the previous texture's result.
+- Perspective crop: a drag just outside the region no longer replaces corners placed by hand, and corners grab from a little further out.
+- The Crop tool closes when another texture is opened, so a frame drawn for one texture cannot crop the next.
+- Esc closing a dropdown in the Crop tool no longer cancels the crop.
+- Two SEAMS windows saving settings at the same moment no longer collide on one temporary file.
+- Crop: pressing on a corner and pulling outward turned the frame instead of resizing it. A gesture now acts on what was under the pointer when the button went down, and corners grab from a little further out.
+- `Shift` + a letter shortcut no longer fires while typing in a value field.
+- The application icon and version information were missing from `SEAMS.exe` when the project folder's path contained a space.
+- The status bar shows the base color's current size, not the size it was opened at.
+- Delight: Highlight reduction and AO removal no longer also lift shadows. Each of Shadow removal, Highlight reduction and AO removal now acts only on its own part of the lighting.
+- Delight: Contrast recovery no longer brings back the shadows that Shadow removal took out.
+- Delight: Color preservation now keeps lifted shadows saturated instead of only undoing Flatness. On its own it changes nothing, so Apply stays off.
+- Delight: Edge consistency and Detail are sized relative to the image, so they are visible on large textures and the live preview matches the full-resolution result.
 
 ## Python application: changes after 3.2.0 that were never released
 
