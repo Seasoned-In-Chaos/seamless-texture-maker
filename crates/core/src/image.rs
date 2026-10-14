@@ -1,5 +1,7 @@
 //! The pixel buffer every processing function works on.
 
+use rayon::prelude::*;
+
 use crate::error::{CoreError, Result};
 use crate::key::KeyHasher;
 
@@ -8,9 +10,8 @@ pub const MIN_DIMENSION: usize = 64;
 /// Largest side length the app imports.
 pub const MAX_DIMENSION: usize = 8192;
 
-const HASH_GRID_STEPS: usize = 16;
-const HASH_RANDOM_SAMPLES: usize = 1024;
-const HASH_SEED: u64 = 0x005E_A415;
+/// Values hashed per parallel task by [`Image::fingerprint`].
+const FINGERPRINT_CHUNK: usize = 1 << 16;
 
 /// An interleaved `f32` image with 1 (gray), 3 (RGB) or 4 (RGBA) channels.
 ///
@@ -176,24 +177,21 @@ impl Image {
         Ok(())
     }
 
-    /// A fast content hash for cache keys.
+    /// A content hash for cache keys, over every value.
     ///
-    /// Samples a regular grid plus a fixed pseudo-random set of pixels: the
-    /// grid alone can alias with a regularly patterned texture and collide.
+    /// Results are cached under it, so two images that differ anywhere must
+    /// hash differently: a sampled hash let a small retouch reuse the old
+    /// image's result. Chunks are hashed in parallel and combined in order.
     pub fn fingerprint(&self) -> u64 {
+        let chunks: Vec<u64> = self
+            .data
+            .par_chunks(FINGERPRINT_CHUNK)
+            .map(|chunk| KeyHasher::new().slice(chunk).finish())
+            .collect();
         let mut hasher = KeyHasher::new();
         hasher.usize(self.width).usize(self.height).usize(self.channels);
-        let step = (self.height / HASH_GRID_STEPS).max(self.width / HASH_GRID_STEPS).max(1);
-        for y in (0..self.height).step_by(step) {
-            for x in (0..self.width).step_by(step) {
-                hasher.slice(self.pixel(x, y));
-            }
-        }
-        let mut rng = crate::rng::Rng::new(HASH_SEED);
-        for _ in 0..HASH_RANDOM_SAMPLES.min(self.pixel_count()) {
-            let x = rng.below(self.width);
-            let y = rng.below(self.height);
-            hasher.slice(self.pixel(x, y));
+        for chunk in chunks {
+            hasher.u64(chunk);
         }
         hasher.finish()
     }
@@ -277,5 +275,17 @@ mod tests {
 
         assert_eq!(a.fingerprint(), a.clone().fingerprint());
         assert_ne!(a.fingerprint(), b.fingerprint());
+    }
+
+    #[test]
+    fn fingerprint_sees_a_change_to_any_single_value() {
+        let a = Image::filled(300, 200, 3, 0.5).unwrap();
+
+        // Every position, so no unsampled pixel can hide a change.
+        for index in (0..a.data().len()).step_by(997) {
+            let mut b = a.clone();
+            b.data_mut()[index] = 0.51;
+            assert_ne!(a.fingerprint(), b.fingerprint(), "value {index}");
+        }
     }
 }

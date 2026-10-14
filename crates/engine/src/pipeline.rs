@@ -43,14 +43,38 @@ impl Keyed {
     }
 }
 
+/// The fingerprint of the most recent source buffer. Sources are shared,
+/// immutable `Arc`s, so the same buffer is hashed once, not per request.
+#[derive(Default)]
+struct LastKey(Option<(Arc<Image>, u64)>);
+
+impl LastKey {
+    fn of(&mut self, image: &Arc<Image>) -> u64 {
+        if let Some((last, key)) = &self.0
+            && Arc::ptr_eq(last, image)
+        {
+            return *key;
+        }
+        let key = image.fingerprint();
+        self.0 = Some((Arc::clone(image), key));
+        key
+    }
+}
+
 /// Runs delight and seamless, reusing earlier results.
 pub struct RenderCache {
     images: LruCache<Arc<Image>>,
+    source_key: LastKey,
 }
 
 impl RenderCache {
     pub fn new(limits: CacheLimits) -> Self {
-        Self { images: LruCache::new(limits) }
+        Self { images: LruCache::new(limits), source_key: LastKey::default() }
+    }
+
+    /// `image` as a source, keyed by its content.
+    pub fn source(&mut self, image: &Arc<Image>) -> Keyed {
+        Keyed { image: Arc::clone(image), key: self.source_key.of(image) }
     }
 
     fn get_or_render(
@@ -87,20 +111,21 @@ impl RenderCache {
 /// Generates material maps, recomputing only those whose settings changed.
 pub struct MapCache {
     maps: LruCache<Arc<Image>>,
+    source_key: LastKey,
 }
 
 impl MapCache {
     pub fn new(limits: CacheLimits) -> Self {
-        Self { maps: LruCache::new(limits) }
+        Self { maps: LruCache::new(limits), source_key: LastKey::default() }
     }
 
     /// Every map for `source`, each taken from the cache when still valid.
     pub fn generate(
         &mut self,
-        source: &Image,
+        source: &Arc<Image>,
         params: &MaterialParams,
     ) -> Result<Vec<(MapKind, Arc<Image>)>> {
-        let source_key = source.fingerprint();
+        let source_key = self.source_key.of(source);
         let mut field: Option<HeightField> = None;
         let mut result = Vec::with_capacity(MapKind::ALL.len());
         for kind in MapKind::ALL {

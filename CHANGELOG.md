@@ -13,7 +13,8 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - The Crop tool shows a turning-arrow cursor where a drag will turn the frame, with the angle beside it while turning.
 - Icons from Lucide (ISC license) for the crop, pan and fit buttons, tile guides, dropdowns and the empty canvas.
 - A pan tool button in the view bar (`H`), and hold `Space` to pan with any tool. The cursor shows a hand while panning.
-- Zoom in and Zoom out (`Ctrl+=` / `Ctrl++`, `Ctrl+-`) through Photoshop's zoom levels, also in the View menu.
+- Zoom in and Zoom out (`Ctrl+=` / `Ctrl++`, `Ctrl+-`) through Photoshop's zoom levels, also in the View menu and as − / + buttons beside the zoom percentage.
+- A Zoom tool (`Z`, or the magnifier in the view bar), as in Photoshop with Scrubby Zoom: click to zoom in at the pointer, Alt-click to zoom out, or drag right and left to zoom continuously about where the drag began. The pan and zoom tools show Lucide icons as the pointer.
 - A "Replace original file" option above the export button, for the base color. The button then saves over the opened file in its own format, after a confirmation. It is the same setting as File › Quick save replaces the original.
 - `Ctrl+Q` exits. Redo is `Ctrl+Shift+Z`, as in Photoshop; `Ctrl+Y` still works.
 - Keyboard focus rings on toggles, segmented controls, checkboxes and the primary button.
@@ -29,6 +30,11 @@ and this project follows [Semantic Versioning](https://semver.org/).
 - `Ctrl+=`, `Ctrl+-` and `Ctrl+0` no longer rescale the whole interface.
 
 ### Fixed
+- Results are cached under a hash of every pixel. The hash used to sample about 1,300 pixels, so opening a texture of the same size that differed only in a small area could reuse, and export, the previous texture's result.
+- Perspective crop: a drag just outside the region no longer replaces corners placed by hand, and corners grab from a little further out.
+- The Crop tool closes when another texture is opened, so a frame drawn for one texture cannot crop the next.
+- Esc closing a dropdown in the Crop tool no longer cancels the crop.
+- Two SEAMS windows saving settings at the same moment no longer collide on one temporary file.
 - Crop: pressing on a corner and pulling outward turned the frame instead of resizing it. A gesture now acts on what was under the pointer when the button went down, and corners grab from a little further out.
 - `Shift` + a letter shortcut no longer fires while typing in a value field.
 - The application icon and version information were missing from `SEAMS.exe` when the project folder's path contained a space.

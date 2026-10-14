@@ -169,6 +169,8 @@ impl SeamsApp {
     fn on_event(&mut self, ctx: &Context, event: Event) {
         match event {
             Event::Opened(path) => {
+                // A frame drawn for the previous texture means nothing on this one.
+                self.crop = None;
                 self.settings.remember_file(&path);
                 self.channel = Channel::BaseColor;
                 self.canvas.fit_to_window();

@@ -87,7 +87,8 @@ impl Settings {
             std::fs::create_dir_all(parent)?;
         }
         let json = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
-        let temp = path.with_extension("json.tmp");
+        // One temporary file per process: several SEAMS windows may save at once.
+        let temp = path.with_extension(format!("json.{}.tmp", std::process::id()));
         std::fs::write(&temp, json)?;
         std::fs::rename(&temp, path)
     }

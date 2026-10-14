@@ -350,7 +350,8 @@ impl CropTool {
     /// Enter applies (`Some(true)`) and Esc cancels (`Some(false)`), unless
     /// a text field has the keyboard.
     pub fn key_command(ui: &egui::Context) -> Option<bool> {
-        if ui.egui_wants_keyboard_input() {
+        // An open dropdown takes Esc and Enter for itself.
+        if ui.egui_wants_keyboard_input() || egui::Popup::is_any_open(ui) {
             return None;
         }
         ui.input(|i| {
@@ -469,10 +470,13 @@ impl CropTool {
                     Drag::Corner { index, offset: point - corner_pos(&start, index), start }
                 }
                 QuadHit::Edge(index) => Drag::Edge { index, grab: point, start },
-                QuadHit::Inside if !self.untouched => Drag::Shift { grab: point, start },
-                QuadHit::Inside | QuadHit::Outside => {
+                // A new rectangle only replaces the untouched whole image:
+                // a near miss must never throw away corners placed by hand.
+                QuadHit::Inside | QuadHit::Outside if self.untouched => {
                     Drag::Draw { anchor: clamp_to(point, self.image) }
                 }
+                QuadHit::Inside => Drag::Shift { grab: point, start },
+                QuadHit::Outside => return,
             });
         }
         if response.dragged_by(PointerButton::Primary)
@@ -625,7 +629,11 @@ fn to_array(point: Pos2) -> [f32; 2] {
 
 fn quad_hit(quad: &Quad, point: Pos2, tolerance: f32) -> QuadHit {
     let corners = [0, 1, 2, 3].map(|index| corner_pos(quad, index));
-    if let Some(index) = corners.iter().position(|corner| corner.distance(point) <= tolerance) {
+    // Corners reach further than edges, as in classic mode; the nearest wins.
+    let reach = tolerance * CORNER_GRAB_SCALE;
+    let nearest =
+        (0..4).min_by(|a, b| corners[*a].distance(point).total_cmp(&corners[*b].distance(point)));
+    if let Some(index) = nearest.filter(|index| corners[*index].distance(point) <= reach) {
         return QuadHit::Corner(index);
     }
     for index in 0..4 {
@@ -1073,6 +1081,14 @@ mod tests {
         assert_eq!(quad_hit(&quad, pos2(200.0, 400.0), 8.0), QuadHit::Edge(3));
         assert_eq!(quad_hit(&quad, pos2(500.0, 400.0), 8.0), QuadHit::Inside);
         assert_eq!(quad_hit(&quad, pos2(150.0, 150.0), 8.0), QuadHit::Outside);
+    }
+
+    #[test]
+    fn a_perspective_corner_grabs_from_further_than_an_edge() {
+        let quad = keystone();
+
+        // 14 px from the top-right corner: past an edge's 10, inside a corner's 16.
+        assert_eq!(quad_hit(&quad, pos2(710.0, 90.0), 10.0), QuadHit::Corner(1));
     }
 
     #[test]

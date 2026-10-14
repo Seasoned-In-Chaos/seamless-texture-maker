@@ -217,7 +217,7 @@ fn render_full(
 ) {
     let generation = request.generation;
     let started = Instant::now();
-    let source = Keyed::source(Arc::clone(&request.source));
+    let source = cache.source(&request.source);
     let delighted = guarded(|| cache.delighted(&source, &request.params.delight));
     let delighted = match delighted {
         Ok(delighted) => delighted,
