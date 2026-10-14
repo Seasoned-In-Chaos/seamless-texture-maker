@@ -28,17 +28,17 @@ All sliders default to **0** (no processing). Adjust them as needed:
 
 | Slider | Range | Default | Description |
 |---|---|---|---|
-| Shadow Removal | 0–100% | 0% | Removes dark shadows from the image |
-| Highlight Reduction | 0–100% | 0% | Reduces bright specular spots |
-| Contrast Recovery | 0–100% | 0% | Restores contrast lost during delighting |
-| Detail Preservation | 0–100% | 0% | Preserves fine surface details |
-| Color Preservation | 0–100% | 0% | Maintains original color relationships |
-| Flatness Strength | 0–100% | 0% | Flattens color variation toward the mean |
-| AO Removal | 0–100% | 0% | Removes ambient occlusion baked into the photo |
-| Edge Consistency | 0–100% | 0% | Maintains consistent color at edges |
+| Shadow Removal | 0–100% | 0% | Lifts under-lit areas and the darkest tones; bright areas are left alone |
+| Highlight Reduction | 0–100% | 0% | Lowers over-lit areas and bright specular spots; shadows are left alone |
+| AO Removal | 0–100% | 0% | Lifts small crevices that are darker than their surroundings, without touching broad lighting |
+| Flatness | 0–100% | 0% | Pulls colour toward the image's average colour |
+| Contrast Recovery | 0–100% | 0% | Restores texture contrast after flattening, without bringing the lighting back |
+| Detail | 0–100% | 0% | Sharpens fine surface detail |
+| Color Preservation | 0–100% | 0% | Keeps lifted shadows saturated instead of grey. Only has an effect together with the controls that change lightness |
+| Edge Consistency | 0–100% | 0% | Softens harsh tonal transitions |
 
 <Tip>
-The effective delight strength is `max(shadow, ao, highlight)`. If you set Shadow Removal to 80% and everything else to 0, the delight will operate at 80% strength using the shadow algorithm.
+Each slider acts on its own part of the image, so Shadow Removal and Highlight Reduction can be set independently. Every effect is sized relative to the image, so the live preview matches the full-resolution result.
 </Tip>
 
 ## Output Intent

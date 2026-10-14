@@ -1,0 +1,22 @@
+﻿[package]
+name = "seams-io"
+description = "SEAMS image file reading and writing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+seams-core = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+serde = { workspace = true }
+image = { workspace = true }
+# Same version the image crate uses: read and write the PNG pHYs (DPI) chunk.
+png = "0.18"
+
+[dev-dependencies]
+tempfile = "3"

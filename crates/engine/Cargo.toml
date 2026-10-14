@@ -1,0 +1,21 @@
+[package]
+name = "seams-engine"
+description = "SEAMS application engine: document state, background rendering and settings"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+seams-core = { workspace = true }
+seams-io = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3"

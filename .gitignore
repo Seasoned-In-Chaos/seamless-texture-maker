@@ -1,15 +1,8 @@
-﻿# Python
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-.venv/
-.venv-build/
-*.egg-info/
+# Rust
+target/
 
 # Build output
 dist/
-build/
 
 # MSIX staging
 store/SEAMS/
@@ -25,14 +18,7 @@ store/*.msix
 Thumbs.db
 
 # Logs
-output.log
 *.log
-
-# PyInstaller
-*.spec.bak
 
 # Temp / scratch
 scratch/
-
-# Benchmark output
-benchmarks/results_*.json

@@ -9,6 +9,9 @@ on:
 permissions:
   contents: write
 
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   build-windows:
     runs-on: windows-latest
@@ -17,44 +20,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
         with:
-          python-version: '3.12'
+          components: rustfmt, clippy
 
-      - name: Cache Python venv
-        uses: actions/cache@v4
-        with:
-          path: .venv-build
-          key: venv-${{ runner.os }}-py312-${{ hashFiles('requirements.txt') }}
-          restore-keys: venv-${{ runner.os }}-py312-
+      - name: Cache build
+        uses: Swatinem/rust-cache@v2
 
-      - name: Create build venv and install dependencies
-        shell: cmd
-        run: |
-          python -m venv .venv-build
-          call .venv-build\Scripts\activate.bat
-          python -m pip install --quiet --upgrade pip
-          pip install --quiet -r requirements.txt
-          pip install --quiet pyinstaller packaging
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Lint
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Run automated tests
-        shell: cmd
-        run: |
-          call .venv-build\Scripts\activate.bat
-          pip install --quiet pytest
-          python -m pytest -q
+        run: cargo test --workspace
 
-      - name: Install UPX
+      - name: Build release executable
         shell: pwsh
-        run: choco install upx --yes
-
-      - name: Build with PyInstaller
-        shell: cmd
         run: |
-          call .venv-build\Scripts\activate.bat
-          where upx >nul 2>&1 && for /f "tokens=*" %%u in ('where upx') do set "UPX=%%u"
-          python -m PyInstaller build.spec --clean --noconfirm
+          cargo build --release -p seams
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target/release/seams.exe dist/SEAMS.exe
 
       - name: Build installer with Inno Setup
         if: startsWith(github.ref, 'refs/tags/')

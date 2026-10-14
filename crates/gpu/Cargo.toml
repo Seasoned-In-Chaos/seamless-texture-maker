@@ -1,0 +1,22 @@
+[package]
+name = "seams-gpu"
+description = "SEAMS GPU preview: material maps rendered with wgpu, checked against the CPU reference"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+seams-core = { workspace = true }
+log = { workspace = true }
+bytemuck = "1"
+# Same major version as eframe's wgpu, so the application's device can be shared.
+wgpu = { version = "30", default-features = false, features = ["std", "wgsl"] }
+
+[dev-dependencies]
+# With the default backends, so the parity tests can open a device of their own.
+wgpu = { version = "30" }
+pollster = "1"

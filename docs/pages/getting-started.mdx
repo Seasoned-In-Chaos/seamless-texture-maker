@@ -10,90 +10,65 @@ description: Install SEAMS and launch it for the first time.
 | Requirement | Minimum | Recommended |
 |---|---|---|
 | **Operating System** | Windows 10 (64-bit) | Windows 11 |
-| **Python** | 3.11 | 3.12+ |
-| **RAM** | 8 GB | 16 GB+ |
-| **OpenGL** | 2.1 compatibility | 4.5+ |
-| **Disk Space** | 500 MB | 1 GB+ |
+| **RAM** | 8 GB | 16 GB or more for 4K textures |
+| **Graphics** | DirectX 12, Vulkan or OpenGL | A dedicated GPU |
+| **Disk Space** | 50 MB | 50 MB |
+
+SEAMS is a single native executable. It needs no runtime, and nothing else has to be installed.
 
 ## Installation
 
+### Pre-built Installer
+
+Download the latest installer from the [GitHub Releases](https://github.com/Seasoned-In-Chaos/seamless-texture-maker/releases) page, run it and follow the prompts. The standalone `SEAMS.exe` on the same page runs without installing.
+
 ### From Source
 
+Install [Rust](https://rustup.rs) 1.90 or newer. With the GNU toolchain, also install MinGW-w64 (`winget install BrechtSanders.WinLibs.POSIX.UCRT`). With the MSVC toolchain, install the Visual Studio C++ build tools instead.
+
 ```bash
-# Clone the repository
 git clone https://github.com/Seasoned-In-Chaos/seamless-texture-maker.git
 cd seamless-texture-maker
 
-# Create a virtual environment
-python -m venv .venv
-.venv\Scripts\activate
-
-# Install Python dependencies
-pip install -r requirements.txt
-
-# Launch SEAMS
-python main.py
+cargo run --release -p seams
 ```
-
-### Pre-built Installer
-
-Download the latest installer from the [GitHub Releases](https://github.com/Seasoned-In-Chaos/seamless-texture-maker/releases) page. Run the Inno Setup installer and follow the prompts.
 
 ## First Launch
 
-When you launch SEAMS for the first time:
+The window opens on an empty canvas with an **Open texture** button. Open a file with it, with `Ctrl+O`, by double-clicking the canvas, or by dropping an image on the window. You can also pass a file on the command line or use **Open with** in Explorer.
 
-1. **Splash screen** — A ~2.5 second animated splash plays while Numba JIT functions are pre-compiled in the background. This ensures your first interaction is stall-free.
+Supported formats are PNG, JPG, TIFF, TGA and EXR. Images must be between 64 and 8192 pixels on each side.
 
-2. **Empty workspace** — The main window opens in Classic Mode with an empty 2D viewport. Double-click or drag-and-drop an image to get started.
+## Settings and Logs
 
-3. **Single instance** — SEAMS uses a Windows named mutex to prevent duplicate instances. A second launch exits immediately while the first copy continues running.
-
-## DPI & Display
-
-SEAMS uses `PassThrough` DPI rounding policy, which respects your native Windows scaling:
-
-| Display | Scale Factor | Behavior |
-|---|---|---|
-| 1080p at 100% | 1.0x | Pixel-perfect, no scaling |
-| 1080p at 125% | 1.25x | Native OS scaling, window clamped to screen |
-| 1440p at 150% | 1.5x | Native OS scaling |
-| 4K at 200% | 2.0x | Native OS scaling |
-
-The main window automatically clamps to your available screen area on launch, even if a previously saved geometry was larger.
-
-## Settings Location
-
-All persistent settings are stored in:
+Settings are stored in:
 
 ```
 %APPDATA%\SeamlessTextureMaker\settings.json
 ```
 
-Numba JIT cache is stored in:
+The log is at:
 
 ```
-%APPDATA%\SeamlessTextureMaker\numba_cache
+%APPDATA%\SeamlessTextureMaker\logs\seams.log
 ```
 
-<Warning>
-If you experience window sizing issues (window too large, can't resize), delete the `window_geometry` key from `settings.json` while SEAMS is closed. On next launch, the window will use safe defaults.
-</Warning>
+A missing or unreadable settings file is ignored: SEAMS starts with defaults. Delete the file while SEAMS is closed to reset everything.
 
-## Building from Source (Full Pipeline)
+## Building the Installer
 
-The `build.bat` script runs the complete production build:
+`build.bat` runs the complete production build:
 
 ```batch
 build.bat
 ```
 
-This 6-step pipeline:
-1. Finds the available Python interpreter (3.11 or newer)
-2. Creates/updates the build virtual environment
-3. Installs all dependencies
-4. Runs PyInstaller
-5. Signs the executable (if `SIGN_PFX` is set)
-6. Builds the Inno Setup installer
+It:
 
-For Microsoft Store (MSIX) builds, use `build_store.bat` instead.
+1. Finds the Rust toolchain
+2. Runs the test suite, and stops if a test fails
+3. Builds the release executable to `dist\SEAMS.exe`
+4. Signs it, if `SIGN_PFX` is set
+5. Builds the Inno Setup installer, if Inno Setup is installed
+
+For a Microsoft Store (MSIX) package, use `build_store.bat`. It needs the Windows 10 SDK.

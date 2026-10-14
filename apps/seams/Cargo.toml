@@ -1,0 +1,27 @@
+[package]
+name = "seams"
+description = "SEAMS: seamless texture and PBR map studio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+build = "build.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+seams-core = { workspace = true }
+seams-io = { workspace = true }
+seams-engine = { workspace = true }
+seams-gpu = { workspace = true }
+eframe = { workspace = true, features = ["wgpu", "default_fonts"] }
+egui = { workspace = true }
+rfd = { workspace = true }
+log = { workspace = true }
+image = { workspace = true, features = ["ico"] }
+
+[build-dependencies]
+# Icon and version information for seams.exe; only used when targeting Windows.
+winresource = "0.1"

@@ -1,5 +1,8 @@
 #define MyAppName "Seamless Texture Maker"
-#define MyAppVersion "3.2.0"
+; build.bat passes the version from Cargo.toml with /DMyAppVersion=...
+#ifndef MyAppVersion
+  #define MyAppVersion "4.0.0"
+#endif
 #define MyAppPublisher "Shubham Panchasara"
 #define MyAppExeName "SEAMS.exe"
 
@@ -8,7 +11,6 @@ AppId={{DA6FB758-C976-4700-ADC3-6B1DF8D279E4}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
-AppMutex=SeamlessTextureMaker_Mutex_DA6FB758
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
@@ -19,14 +21,17 @@ Compression=lzma
 SolidCompression=yes
 ArchitecturesInstallIn64BitMode=x64compatible
 ArchitecturesAllowed=x64compatible
-UninstallDisplayIcon={app}\icon.ico
+UninstallDisplayIcon={app}\{#MyAppExeName}
 SetupLogging=yes
 VersionInfoVersion={#MyAppVersion}
 PrivilegesRequired=admin
 WizardStyle=modern
+; Ask a running SEAMS to close so its executable can be replaced.
+CloseApplications=yes
 
 [InstallDelete]
 Type: files; Name: "{app}\SeamlessTextureMaker.exe"
+Type: files; Name: "{app}\icon.ico"
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -36,7 +41,6 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 
 [Files]
 Source: "dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
-Source: "resources\icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\SEAMS"; Filename: "{app}\{#MyAppExeName}"
@@ -57,7 +61,7 @@ begin
     if DirExists(DataDir) then
     begin
       if MsgBox(
-        'Do you want to delete your SEAMS user data (settings, logs, cache)?',
+        'Do you want to delete your SEAMS user data (settings and logs)?',
         mbConfirmation, MB_YESNO) = IDYES then
       begin
         DelTree(DataDir, True, True, True);

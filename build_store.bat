@@ -1,154 +1,93 @@
 @echo off
 setlocal enabledelayedexpansion
 
-:: ── Configuration ──────────────────────────────────────────────────────
-set "PY_VER=3.12"
-set "VENV_DIR=.venv-build"
+:: SEAMS Microsoft Store build: packages the release executable as MSIX.
+:: Needs the Windows 10 SDK for MakeAppx.exe. Run from the repository root.
 
-for /f "tokens=*" %%v in ('python -c "import sys; sys.path.insert(0, '.'); from app.utils.config import APP_VERSION; print(APP_VERSION)" 2^>nul') do set "APP_VER=%%v"
-if not defined APP_VER set "APP_VER=unknown"
+cd /d "%~dp0"
+
+where cargo >nul 2>&1
+if errorlevel 1 if exist "%USERPROFILE%\.cargo\bin\cargo.exe" set "PATH=%USERPROFILE%\.cargo\bin;%PATH%"
+where dlltool >nul 2>&1
+if errorlevel 1 (
+    for /d %%d in ("%LOCALAPPDATA%\Microsoft\WinGet\Packages\BrechtSanders.WinLibs*") do (
+        if exist "%%d\mingw64\bin\dlltool.exe" set "PATH=%%d\mingw64\bin;!PATH!"
+    )
+)
+
+set "APP_VER=unknown"
+for /f "tokens=2 delims== " %%v in ('findstr /b /c:"version = " Cargo.toml') do set "APP_VER=%%~v"
 
 echo ========================================
 echo  SEAMS v%APP_VER% - Microsoft Store (MSIX) Build
 echo ========================================
 echo.
 
-:: ── Step 1: Find Python 3.12 ────────────────────────────────────────────
-echo [1/7] Finding Python %PY_VER%...
-set "PY312="
-
-py -%PY_VER% --version >nul 2>&1
-if not errorlevel 1 (
-    for /f "tokens=*" %%p in ('py -%PY_VER% -c "import sys; print(sys.executable)"') do set "PY312=%%p"
-)
-
-if not defined PY312 if exist "%LOCALAPPDATA%\Programs\Python\Python312\python.exe" set "PY312=%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
-if not defined PY312 if exist "C:\Python312\python.exe" set "PY312=C:\Python312\python.exe"
-
-if not defined PY312 (
-    echo [ERROR] Python 3.12 not found!
-    exit /b 1
-)
-echo [OK] Python 3.12: %PY312%
-echo.
-
-:: ── Step 2: Create / update build venv ──────────────────────────────────
-echo [2/7] Setting up build virtual environment...
-if not exist "%VENV_DIR%\Scripts\activate.bat" (
-    "%PY312%" -m venv "%VENV_DIR%"
-    if errorlevel 1 (
-        echo [ERROR] Failed to create venv!
-        exit /b 1
-    )
-)
-call "%VENV_DIR%\Scripts\activate.bat"
-echo [OK] Venv activated: %VIRTUAL_ENV%
-echo.
-
-:: ── Step 3: Install dependencies ────────────────────────────────────────
-echo [3/7] Installing Python dependencies...
-python -m pip install --quiet --upgrade pip
-python -m pip install --quiet -r requirements.txt
-python -m pip install --quiet pyinstaller packaging
-echo [OK] Dependencies installed.
-echo.
-
-:: ── Step 4: Check Windows SDK (MakeAppx) ──────────────────────────────
-echo [4/7] Checking Windows SDK...
+:: -- Step 1: Windows SDK (MakeAppx) -------------------------------------
+echo [1/4] Checking the Windows SDK...
 set "MAKEAPPX="
 set "SIGNTOOL="
-
 for /f "delims=" %%i in ('dir /b /ad /o-n "C:\Program Files (x86)\Windows Kits\10\bin\10.*" 2^>nul') do (
-    if exist "C:\Program Files (x86)\Windows Kits\10\bin\%%i\x64\MakeAppx.exe" (
+    if not defined MAKEAPPX if exist "C:\Program Files (x86)\Windows Kits\10\bin\%%i\x64\MakeAppx.exe" (
         set "MAKEAPPX=C:\Program Files (x86)\Windows Kits\10\bin\%%i\x64\MakeAppx.exe"
         set "SIGNTOOL=C:\Program Files (x86)\Windows Kits\10\bin\%%i\x64\signtool.exe"
     )
 )
-
 if not defined MAKEAPPX (
-    echo [ERROR] Windows SDK not found! Install Windows SDK 10 to get MakeAppx.exe
-    call deactivate
+    echo [ERROR] Windows SDK not found. Install the Windows 10 SDK to get MakeAppx.exe.
     exit /b 1
 )
 echo [OK] MakeAppx: %MAKEAPPX%
 echo.
 
-:: ── Step 5: PyInstaller onedir build ────────────────────────────────────
-echo [5/7] Building onedir layout (for MSIX)...
-if exist "dist\SEAMS" rmdir /s /q "dist\SEAMS"
-if exist "build" rmdir /s /q "build"
-
-where upx >nul 2>&1
-if not errorlevel 1 (
-    for /f "tokens=*" %%u in ('where upx') do set "UPX=%%u"
-    echo [OK] UPX found: %UPX%
-)
-
-python -m PyInstaller build_store.spec --clean --noconfirm
+:: -- Step 2: Release build ----------------------------------------
+echo [2/4] Building the release executable...
+cargo build --release -p seams
 if errorlevel 1 (
-    echo [ERROR] PyInstaller build failed!
-    call deactivate
+    echo [ERROR] Build failed!
     exit /b 1
 )
-echo [OK] Onedir build complete: dist\SEAMS\
 echo.
 
-:: ── Step 6: Assemble MSIX package ──────────────────────────────────────
-echo [6/7] Assembling MSIX package...
+:: -- Step 3: Assemble the package layout --------------------------------
+echo [3/4] Assembling the MSIX layout...
 set "MSIX_STAGING=dist\SEAMS_MSIX"
 if exist "%MSIX_STAGING%" rmdir /s /q "%MSIX_STAGING%"
 mkdir "%MSIX_STAGING%\images"
-
-copy /y "store\AppxManifest.xml" "%MSIX_STAGING%\"
-xcopy /e /i /y "dist\SEAMS" "%MSIX_STAGING%\SEAMS\"
-copy /y "store\images\*.png" "%MSIX_STAGING%\images\" 2>nul
-
-if not exist "%MSIX_STAGING%\images\StoreLogo.png" (
-    if exist "resources\icon.png" copy /y "resources\icon.png" "%MSIX_STAGING%\images\StoreLogo.png"
-)
-
-echo [OK] MSIX staging ready.
+mkdir "%MSIX_STAGING%\SEAMS"
+copy /y "store\AppxManifest.xml" "%MSIX_STAGING%\" >nul
+copy /y "target\release\seams.exe" "%MSIX_STAGING%\SEAMS\SEAMS.exe" >nul
+copy /y "store\images\*.png" "%MSIX_STAGING%\images\" >nul
+echo [OK] Layout ready: %MSIX_STAGING%
 echo.
 
-:: ── Step 7: Package & sign MSIX ────────────────────────────────────────
-echo [7/7] Packaging MSIX...
-"%MAKEAPPX%" pack /d "%MSIX_STAGING%" /p "dist\SEAMS.msix" /v
+:: -- Step 4: Package and sign ----------------------------------------
+echo [4/4] Packaging...
+"%MAKEAPPX%" pack /o /d "%MSIX_STAGING%" /p "dist\SEAMS.msix"
 if errorlevel 1 (
     echo [ERROR] MSIX packaging failed!
-    call deactivate
     exit /b 1
 )
-echo [OK] MSIX package created: dist\SEAMS.msix
+echo [OK] Package: dist\SEAMS.msix
 
 set "TEST_CERT_SUBJECT=CN=Shubham Panchasara, O=Shubham Panchasara, C=US"
-for /f "tokens=*" %%t in ('powershell -NoProfile -Command "try { (Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.Subject -eq '%TEST_CERT_SUBJECT%' } | Select-Object -First 1).Thumbprint } catch { '' }"') do set "CERT_THUMB=%%t"
-
+set "CERT_THUMB="
+for /f "tokens=*" %%t in ('powershell -NoProfile -Command "(Get-ChildItem Cert:\CurrentUser\My | Where-Object { $_.Subject -eq '%TEST_CERT_SUBJECT%' } | Select-Object -First 1).Thumbprint"') do set "CERT_THUMB=%%t"
 if defined CERT_THUMB (
     "%SIGNTOOL%" sign /fd SHA256 /sha1 %CERT_THUMB% /a "dist\SEAMS.msix"
-    if not errorlevel 1 (
-        echo [OK] MSIX signed with test certificate.
+    if errorlevel 1 (
+        echo [WARNING] Signing failed. The certificate may need to be trusted first.
     ) else (
-        echo [WARNING] MSIX signing failed. You may need to install the cert as a Trusted Root.
+        echo [OK] Signed with the local test certificate.
     )
 ) else (
-    echo [INFO] No test certificate found. Create one for local testing with:
-    echo   powershell: New-SelfSignedCertificate -Type Custom -KeyUsage DigitalSignature -CertStoreLocation 'Cert:\CurrentUser\My' -Subject '%TEST_CERT_SUBJECT%'
+    echo [INFO] No test certificate found; the package is unsigned.
 )
 
-call deactivate
-
 echo.
 echo ========================================
-echo  MSIX BUILD COMPLETE!
+echo  MSIX BUILD COMPLETE
 echo  Output: dist\SEAMS.msix
-echo.
-echo  To install locally for testing:
-echo    powershell: Add-AppxPackage -Path dist\SEAMS.msix
-echo.
-echo  To submit to the Microsoft Store:
-echo    1. Go to https://partner.microsoft.com/dashboard
-echo    2. Create new app ^> MSIX upload
-echo    3. Upload dist\SEAMS.msix
+echo  Install locally:  powershell Add-AppxPackage -Path dist\SEAMS.msix
 echo ========================================
-
-explorer dist
+exit /b 0

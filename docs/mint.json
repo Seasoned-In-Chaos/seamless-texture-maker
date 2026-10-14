@@ -7,12 +7,12 @@
   },
   "favicon": "/images/favicon.ico",
   "colors": {
-    "primary": "#5b3dff",
-    "light": "#31e6bd",
-    "dark": "#07080c",
+    "primary": "#2f6fde",
+    "light": "#5a96f5",
+    "dark": "#1b1c1e",
     "anchors": {
-      "from": "#5b3dff",
-      "to": "#31e6bd"
+      "from": "#2f6fde",
+      "to": "#2f6fde"
     }
   },
   "topbarLinks": [
@@ -63,8 +63,7 @@
           ]
         },
         "pages/material-lab",
-        "pages/viewport-2d",
-        "pages/viewport-3d"
+        "pages/viewport-2d"
       ]
     },
     {

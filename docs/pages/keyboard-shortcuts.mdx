@@ -9,47 +9,74 @@ description: Complete keyboard shortcut reference for SEAMS.
 
 | Shortcut | Action |
 |---|---|
-| `Ctrl+O` | Open Texture |
-| `Ctrl+S` | Save Current Texture |
-| `Ctrl+Shift+S` | Save As... |
-| `Ctrl+E` | Export Selected Map |
-| `Alt+F4` | Exit |
+| `Ctrl+O` | Open texture |
+| `Ctrl+S` | Save base color |
+| `Ctrl+Shift+S` | Save base color as… |
+| `Ctrl+E` | Export the selected map |
+| `Ctrl+Q` | Exit |
 
-## Navigation
-
-| Shortcut | Action |
-|---|---|
-| `1` | Switch to Delight mode |
-| `2` | Switch to Seamless mode |
-| `3` | Switch to Material Lab mode |
-
-## Viewport
+## Stages
 
 | Shortcut | Action |
 |---|---|
-| `Ctrl+0` | Reset Viewport / Fit to View |
-| `Escape` | Exit Fullscreen (3D viewport) |
-| Scroll wheel | Zoom in/out |
-| Left-click drag | Pan (2D) / Orbit (3D) |
-| Right-click drag | Pan (3D) |
-| Double-click (3D) | Reset camera |
+| `1` | Delight |
+| `2` | Seamless |
+| `3` | Material |
+
+The number keys are ignored while you are typing in a value field.
+
+## Canvas
+
+| Shortcut | Action |
+|---|---|
+| `Ctrl+=` or `Ctrl++` | Zoom in to the next level |
+| `Ctrl+-` | Zoom out to the next level |
+| `Ctrl+0` | Fit to window |
+| `Ctrl+1` | Actual size |
+| `Ctrl+G` | Toggle tile guides |
+| `H` | Toggle the pan tool |
+| Hold `Space` | Pan with any tool |
+| Scroll wheel | Zoom about the pointer, 10% per notch |
+| Pinch, or `Ctrl` + scroll | Zoom about the pointer |
+| `Shift` + scroll | Scroll sideways |
+| `Alt` + scroll | Scroll up and down |
+| Middle-button drag, or drag with the pan tool or `Space` | Pan |
+| Double-click | Fit to window |
+
+The image cannot be panned out of sight: a large image stops at its edges, a small one stays inside the window.
+
+## Crop
+
+| Shortcut | Action |
+|---|---|
+| `C` | Open or close the Crop tool |
+| `Shift+C` | Perspective crop: drag corners onto a surface shot at an angle |
+| Drag inside the untouched frame | Draw a new frame (`Shift`: square, `Alt`: from the centre) |
+| Drag inside the frame | Move it |
+| Drag an edge or corner | Resize (`Shift`: keep proportions, `Alt`: about the centre) |
+| Drag outside the frame | Turn it (`Shift`: 15° steps); the cursor shows a turning arrow |
+| Perspective: drag a corner / an edge | Move that corner / both corners of the edge |
+| `Enter` | Apply the crop (undo with `Ctrl+Z`) |
+| `Esc` | Cancel |
+
+Zoom in and out step through Photoshop's levels (… 33.3%, 50%, 66.7%, 100%, 200% …). With the pan tool on, dragging pans even over the split divider.
 
 ## Edit
 
 | Shortcut | Action |
 |---|---|
 | `Ctrl+Z` | Undo (up to 20 steps) |
-| `Ctrl+Y` | Redo (up to 20 steps) |
+| `Ctrl+Shift+Z` or `Ctrl+Y` | Redo |
 
 ## Help
 
 | Shortcut | Action |
 |---|---|
-| `F1` | Show Keyboard Shortcuts dialog |
+| `F1` | Show the keyboard shortcuts dialog |
 
 ## Drag & Drop
 
 | Action | Behavior |
 |---|---|
-| Drop image file on 2D viewport | Opens the image |
-| Double-click empty viewport | Opens file dialog |
+| Drop an image file on the window | Opens the image |
+| Double-click the empty canvas | Opens the file dialog |

@@ -1,81 +1,76 @@
 @echo off
 setlocal enabledelayedexpansion
 
-:: ── Configuration ──────────────────────────────────────────────────────
-set "PY_VER=3.12"
-set "VENV_DIR=.venv-build"
+:: SEAMS production build: tests, release executable, optional code signing
+:: and the Windows installer. Run from the repository root.
 
-:: ── Step 1: Find Python ────────────────────────────────────────────
-echo [1/6] Finding Python...
-set "PY_EXE="
+cd /d "%~dp0"
 
-if exist "%LOCALAPPDATA%\Programs\Python\Python312\python.exe" set "PY_EXE=%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
-
-if not defined PY_EXE (
-    for /f "tokens=*" %%p in ('py -3.12 -c "import sys; print(sys.executable)" 2^>nul') do set "PY_EXE=%%p"
-)
-
-if not defined PY_EXE (
-    for /f "tokens=*" %%p in ('python -c "import sys; print(sys.executable)" 2^>nul') do set "PY_EXE=%%p"
-)
-
-if not defined PY_EXE (
-    echo [ERROR] Python %PY_VER% not found!
+:: -- Step 1: Find the Rust toolchain ------------------------------------
+echo [1/5] Finding the Rust toolchain...
+where cargo >nul 2>&1
+if errorlevel 1 if exist "%USERPROFILE%\.cargo\bin\cargo.exe" set "PATH=%USERPROFILE%\.cargo\bin;%PATH%"
+where cargo >nul 2>&1
+if errorlevel 1 (
+    echo [ERROR] cargo not found. Install Rust: winget install Rustlang.Rustup
     exit /b 1
 )
 
-for /f "tokens=*" %%v in ('"%PY_EXE%" -c "import sys; sys.path.insert(0, '.'); from app.utils.config import APP_VERSION; print(APP_VERSION)" 2^>nul') do set "APP_VER=%%v"
-if not defined APP_VER set "APP_VER=unknown"
+:: The GNU toolchain links with MinGW tools (dlltool, as, windres). Add a
+:: winget-installed WinLibs to PATH when it is not there already.
+where dlltool >nul 2>&1
+if errorlevel 1 (
+    for /d %%d in ("%LOCALAPPDATA%\Microsoft\WinGet\Packages\BrechtSanders.WinLibs*") do (
+        if exist "%%d\mingw64\bin\dlltool.exe" set "PATH=%%d\mingw64\bin;!PATH!"
+    )
+)
+rustc -vV | findstr /c:"host: " | findstr /c:"gnu" >nul
+if not errorlevel 1 (
+    where dlltool >nul 2>&1
+    if errorlevel 1 (
+        echo [ERROR] The GNU Rust toolchain needs MinGW-w64.
+        echo         Install it: winget install BrechtSanders.WinLibs.POSIX.UCRT
+        exit /b 1
+    )
+)
+
+set "APP_VER=unknown"
+for /f "tokens=2 delims== " %%v in ('findstr /b /c:"version = " Cargo.toml') do set "APP_VER=%%~v"
 
 echo ========================================
 echo  SEAMS v%APP_VER% - Production Build
 echo ========================================
-echo.
-echo [OK] Python: %PY_EXE%
-echo.
-
-:: ── Step 2: Create / update build venv ──────────────────────────────────
-echo [2/6] Setting up build virtual environment...
-if not exist "%VENV_DIR%\Scripts\activate.bat" (
-    "%PY_EXE%" -m venv "%VENV_DIR%"
-    if errorlevel 1 (
-        echo [ERROR] Failed to create venv!
-        exit /b 1
-    )
-)
-call "%VENV_DIR%\Scripts\activate.bat"
-echo [OK] Venv activated: %VIRTUAL_ENV%
+for /f "tokens=*" %%r in ('rustc --version') do echo [OK] %%r
 echo.
 
-:: ── Step 3: Install dependencies ────────────────────────────────────────
-echo [3/6] Installing Python dependencies...
-python -m pip install --quiet --upgrade pip
-python -m pip install --quiet -r requirements.txt
-python -m pip install --quiet pyinstaller packaging
-echo [OK] Dependencies installed.
-echo.
-
-:: ── Step 4: PyInstaller ────────────────────────────────────────────────
-echo [4/6] Building SEAMS.exe with PyInstaller...
-if exist "dist\SEAMS.exe" del /f "dist\SEAMS.exe"
-if exist "build" rmdir /s /q "build"
-
-where upx >nul 2>&1
-if not errorlevel 1 (
-    for /f "tokens=*" %%u in ('where upx') do set "UPX=%%u"
-    echo [OK] UPX found: %UPX%
-)
-
-python -m PyInstaller build.spec --clean --noconfirm
+:: -- Step 2: Tests ----------------------------------------
+echo [2/5] Running the test suite...
+cargo test --workspace --quiet
 if errorlevel 1 (
-    echo [ERROR] PyInstaller build failed!
+    echo [ERROR] Tests failed. Nothing was built.
     exit /b 1
 )
-echo [OK] SEAMS.exe built: dist\SEAMS.exe
+echo [OK] Tests passed.
 echo.
 
-:: ── Step 5: Code sign (optional) ───────────────────────────────────────
-echo [5/6] Code signing...
+:: -- Step 3: Release build ----------------------------------------
+echo [3/5] Building the release executable...
+cargo build --release -p seams
+if errorlevel 1 (
+    echo [ERROR] Build failed!
+    exit /b 1
+)
+if not exist "dist" mkdir "dist"
+copy /y "target\release\seams.exe" "dist\SEAMS.exe" >nul
+if errorlevel 1 (
+    echo [ERROR] Could not copy the executable to dist\. Is SEAMS still running?
+    exit /b 1
+)
+echo [OK] Built: dist\SEAMS.exe
+echo.
+
+:: -- Step 4: Code sign (optional) ---------------------------------------
+echo [4/5] Code signing...
 if not defined SIGN_PFX (
     echo [SKIP] Code signing skipped (SIGN_PFX not set^).
     goto :skip_sign
@@ -90,47 +85,40 @@ echo [OK] EXE signed.
 :skip_sign
 echo.
 
-:: ── Step 6: Inno Setup installer ────────────────────────────────────────
-echo [6/6] Building Windows installer...
+:: -- Step 5: Inno Setup installer ---------------------------------------
+echo [5/5] Building the Windows installer...
 set "ISCC_EXE="
-
 where iscc >nul 2>&1
 if not errorlevel 1 set "ISCC_EXE=iscc"
-
 if not defined ISCC_EXE if exist "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" set "ISCC_EXE=C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
 if not defined ISCC_EXE if exist "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" set "ISCC_EXE=%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe"
 
 if not defined ISCC_EXE (
-    echo [WARNING] Inno Setup not found. Skipping installer.
-    echo Install: winget install JRSoftware.InnoSetup
+    echo [WARNING] Inno Setup not found. Skipping the installer.
+    echo           Install it: winget install JRSoftware.InnoSetup
     goto :done
 )
 
-"%ISCC_EXE%" installer.iss
+"%ISCC_EXE%" /Q /DMyAppVersion=%APP_VER% installer.iss
 if errorlevel 1 (
     echo [ERROR] Installer build failed!
-    goto :done
+    exit /b 1
 )
-
-echo [OK] Installer created in dist\
+echo [OK] Installer: dist\SEAMS_Setup_%APP_VER%.exe
 
 if not defined SIGN_PFX goto :done
-echo [*] Signing installer...
-for %%f in (dist\SEAMS_Setup_*.exe) do (
-    signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /a /f "%SIGN_PFX%" /p "%SIGN_PASS%" "%%f"
-    if errorlevel 1 (
-        echo [ERROR] Installer signing failed!
-        exit /b 1
-    )
+signtool sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /a /f "%SIGN_PFX%" /p "%SIGN_PASS%" "dist\SEAMS_Setup_%APP_VER%.exe"
+if errorlevel 1 (
+    echo [ERROR] Installer signing failed!
+    exit /b 1
 )
+echo [OK] Installer signed.
 
 :done
 echo.
 echo ========================================
-echo  BUILD COMPLETE!
+echo  BUILD COMPLETE
 echo  EXE:        dist\SEAMS.exe
-echo  Installer:  dist\SEAMS_Setup_%APP_VER%.exe
+if defined ISCC_EXE echo  Installer:  dist\SEAMS_Setup_%APP_VER%.exe
 echo ========================================
-
-call deactivate
-explorer dist
+exit /b 0

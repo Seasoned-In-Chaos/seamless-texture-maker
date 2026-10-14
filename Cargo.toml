@@ -1,0 +1,59 @@
+﻿[workspace]
+resolver = "3"
+members = ["crates/*", "apps/*"]
+
+[workspace.package]
+version = "4.0.0"
+edition = "2024"
+license = "MIT"
+rust-version = "1.90"
+authors = ["Shubham Panchasara"]
+repository = "https://github.com/Seasoned-In-Chaos/seamless-texture-maker"
+
+[workspace.dependencies]
+# internal
+seams-core = { path = "crates/core" }
+seams-io = { path = "crates/io" }
+seams-engine = { path = "crates/engine" }
+seams-gpu = { path = "crates/gpu" }
+
+# external
+thiserror = "2"
+rayon = "1"
+log = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "tiff", "tga", "exr"] }
+eframe = { version = "0.36", default-features = false }
+egui = "0.36"
+rfd = "0.17"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+# Non-test code never panics: return the crate's error type instead. Tests may
+# unwrap (see clippy.toml).
+[workspace.lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unimplemented = "deny"
+unreachable = "deny"
+
+[profile.dev]
+opt-level = 1
+
+# Pixel loops are unusably slow unoptimised, so dependencies and the
+# processing crates are optimised even in dev builds.
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.dev.package.seams-core]
+opt-level = 3
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "debuginfo"
