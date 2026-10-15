@@ -7,6 +7,16 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- A Retouch tool (`J`, Edit › Retouch, or the bandage in the view bar): clone and heal. Alt-click where to copy from, then paint; the distance to the source is kept for later strokes. Heal copies the source's detail and matches the color and brightness where it lands; Clone copies exactly. Size, hardness and opacity are in the inspector, and `[` and `]` change the size. With **Wrap around edges** on, strokes continue across the edges so the texture keeps tiling, including over tile borders in the Tiled view. Each stroke is one undo step.
+- **Use result as base** (Seamless stage, or Edit menu): makes the seamless result the base color and sets the new method **None (already tiles)**, so the result can be retouched without being processed again.
+- A tiling check (`Ctrl+Shift+T`, View menu, or the scan icon in the view bar). It marks seams in red, including the line where the texture wraps, and repeated areas in orange, on the canvas and on every tile in the Tiled view, and summarizes both in the inspector.
+- A documentation page for the Crop, Retouch and tiling-check tools.
+- The build workflow also runs on pushes to `main` and on pull requests, so a broken build is found before a release. Only version tags publish a release.
+
+### Changed
+- The documentation no longer describes the earlier Python application: the 3D viewport, CUDA, OpenGL requirements, the splash screen and the old settings file are gone from the pages.
+
 ## [4.0.0] - 2026-10-14
 
 SEAMS is rewritten in Rust. The Python/PyQt6 application is gone; the four seamless methods, delighting and the five PBR maps are ported with the same algorithms and defaults.

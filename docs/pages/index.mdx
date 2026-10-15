@@ -1,20 +1,20 @@
 ---
 title: SEAMS — Seamless Texture Studio
-description: GPU-accelerated desktop app for creating seamless textures and PBR materials for 3D workflows.
+description: A native desktop app for making seamless textures and PBR material maps from a single photo.
 ---
 
 <div style="display: flex; flex-direction: column; align-items: center; padding: 60px 20px 40px; text-align: center;">
-  <h1 class="gradient-text" style="font-size: 3.5rem; font-weight: 800; margin-bottom: 16px;">
+  <h1 style="font-size: 3.5rem; font-weight: 800; margin-bottom: 16px;">
     SEAMS
   </h1>
-  <p style="font-size: 1.25rem; color: var(--seams-text-secondary); max-width: 600px; margin-bottom: 32px;">
-    Create perfectly seamless textures and full PBR material sets from a single image. GPU-accelerated, production-ready, and built for 3D artists.
+  <p style="font-size: 1.25rem; max-width: 600px; margin-bottom: 32px;">
+    Turn a photo into a seamless texture and a full PBR map set. Native, fast and GPU-assisted.
   </p>
   <div style="display: flex; gap: 12px; margin-bottom: 48px;">
-    <a href="/pages/getting-started" style="background: linear-gradient(135deg, #5b3dff, #31e6bd); color: white; padding: 12px 28px; border-radius: 8px; font-weight: 600; text-decoration: none;">
+    <a href="/pages/getting-started" style="background: #ececf0; color: #101012; padding: 12px 28px; border-radius: 6px; font-weight: 600; text-decoration: none;">
       Get Started
     </a>
-    <a href="/pages/quick-start" style="border: 1px solid #252d43; color: #e6e2f2; padding: 12px 28px; border-radius: 8px; font-weight: 600; text-decoration: none;">
+    <a href="/pages/quick-start" style="border: 1px solid #3c3c42; padding: 12px 28px; border-radius: 6px; font-weight: 600; text-decoration: none;">
       Quick Start
     </a>
   </div>
@@ -26,22 +26,22 @@ description: GPU-accelerated desktop app for creating seamless textures and PBR 
 
 <CardGroup cols={3}>
   <Card title="Delighting" icon="sun" href="/pages/delight">
-    Remove directional lighting and shadows from photos to produce flat albedo/base color textures.
+    Remove baked-in shadows, highlights and lighting gradients to get a flat base color.
   </Card>
   <Card title="Seamless Processing" icon="repeat" href="/pages/seamless/overlap-blend">
-    Make textures tileable with Offset + Cross-Fade, Mirror Tiling, Overlap Blend, or Splat Synthesis.
+    Offset cross-fade, mirror tiling, overlap blend or splat synthesis, with live previews.
   </Card>
-  <Card title="PBR Material Lab" icon="palette" href="/pages/material-lab">
-    Generate 6 material channels (Base Color, Normal, Roughness, AO, Displacement, Opacity) from a single image.
+  <Card title="Material Maps" icon="palette" href="/pages/material-lab">
+    Normal, roughness, ambient occlusion, displacement and opacity maps from the base color.
   </Card>
-  <Card title="3D PBR Viewport" icon="cube" href="/pages/viewport-3d">
-    Preview materials on 3D meshes with Cook-Torrance PBR shading, HDRI lighting, and real-time displacement.
+  <Card title="Crop and Perspective Crop" icon="crop" href="/pages/tools">
+    Crop with a turnable frame, or straighten a photo of a surface shot at an angle.
   </Card>
-  <Card title="Texture & Map Export" icon="download" href="/pages/export/pbr-export">
-    Export the seamless texture or any individual PBR map via quick-save, save-as, or per-map export.
+  <Card title="Clone and Heal" icon="bandage" href="/pages/tools">
+    Paint out seams and blemishes. Strokes wrap across the edges, so the texture keeps tiling.
   </Card>
-  <Card title="JIT Accelerated" icon="bolt" href="/pages/getting-started">
-    Numba JIT compilation for performance-critical paths, warmed up in the background at startup.
+  <Card title="Tiling Check" icon="magnifying-glass" href="/pages/tools">
+    Mark visible seams and repeated areas, including in the tiled view.
   </Card>
 </CardGroup>
 
@@ -49,13 +49,10 @@ description: GPU-accelerated desktop app for creating seamless textures and PBR 
 
 ## Why SEAMS?
 
-Traditional seamless texture tools either destroy edge details with Gaussian blur or require manual Photoshop work. SEAMS solves this with:
-
-- **Distance-based gradient blending** — Smooth falloff at seams without losing detail
-- **Splat synthesis** — Texture bombing for organic, non-repetitive patterns
-- **Chunked processing** — Automatic tiling for images over 2048px with corner artifact elimination
-- **Live preview** — 3-stage progressive preview at 12.5%, 50%, and 100% resolution
-- **Result caching** — LRU cache avoids redundant recomputation across parameter changes
+- **Native and small.** One executable of about 20 MB. Nothing to install first.
+- **Live.** Sliders update the result as you drag. On a capable GPU the maps and the seamless result are previewed at full resolution.
+- **Honest output.** Export always uses the CPU code, and tests hold the GPU preview within one 8-bit step of it.
+- **Safe.** Every action is undoable, and a failure is reported in the status bar instead of closing the window.
 
 ---
 
@@ -64,12 +61,10 @@ Traditional seamless texture tools either destroy edge details with Gaussian blu
 | Requirement | Minimum | Recommended |
 |---|---|---|
 | **OS** | Windows 10 (64-bit) | Windows 11 |
-| **Python** | 3.11 | 3.12+ |
-| **RAM** | 8 GB | 16 GB+ |
-| **GPU** | Any (CPU fallback) | NVIDIA with CUDA |
-| **OpenGL** | 2.1 | 4.5+ |
-| **Disk** | 500 MB | 1 GB+ |
+| **RAM** | 8 GB | 16 GB or more for 4K textures |
+| **Graphics** | DirectX 12, Vulkan or OpenGL | A dedicated GPU |
+| **Disk** | 50 MB | 50 MB |
 
 <Note>
-SEAMS runs on CPU only — no GPU is required. CUDA acceleration is optional and provides 3–5x speedup for heavy operations.
+A GPU is optional. Without a usable one, previews run on the CPU and nothing else changes. Set `SEAMS_CPU_PREVIEW=1` to force the CPU.
 </Note>
