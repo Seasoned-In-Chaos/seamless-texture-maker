@@ -96,6 +96,18 @@ fn zoom_controls(app: &mut SeamsApp, ui: &mut Ui) {
     {
         app.queue(Action::ToggleCrop);
     }
+    if icon_toggle(ui, "Retouch", app.retouch.is_some(), icons::RETOUCH)
+        .on_hover_text("Retouch (J): clone and heal. Alt-click a source, then paint.")
+        .clicked()
+    {
+        app.queue(Action::ToggleRetouch);
+    }
+    if icon_toggle(ui, "Check tiling", app.tiling.on, icons::TILING_CHECK)
+        .on_hover_text("Check tiling (Ctrl+Shift+T): marks seams and repeated areas.")
+        .clicked()
+    {
+        app.queue(Action::ToggleTilingCheck);
+    }
     let tool = app.canvas.tool;
     if icon_toggle(ui, "Pan tool", tool == NavTool::Pan, icons::HAND)
         .on_hover_text("Pan tool (H). Hold Space to pan with any tool.")

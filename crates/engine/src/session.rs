@@ -22,6 +22,7 @@ use seams_core::filter::resize_area;
 use seams_core::image::MIN_DIMENSION;
 use seams_core::pbr::{MapKind, MaterialParams};
 use seams_core::perspective::{Quad, perspective_crop};
+use seams_core::seamless::Method;
 use seams_io::{BitDepth, FileFormat, Loaded, SaveOptions};
 
 use crate::display::DisplayImage;
@@ -34,7 +35,7 @@ use crate::worker::{Mailbox, Policy, Worker};
 /// Longest side of the image used for live previews.
 const PREVIEW_MAX_SIDE: usize = 768;
 /// Longest side of any image handed to the front end for display.
-const DISPLAY_MAX_SIDE: usize = 4096;
+pub const DISPLAY_MAX_SIDE: usize = 4096;
 /// How long input must pause before the full-resolution render starts.
 const SETTLE_DELAY: Duration = Duration::from_millis(250);
 const JPEG_QUALITY: u8 = 95;
@@ -551,14 +552,43 @@ impl Session {
         self.replace_base(|base| perspective_crop(base, quad, width, height))
     }
 
+    /// True when the up-to-date seamless result can become the base colour.
+    pub fn can_bake_seamless(&self) -> bool {
+        self.current(&self.seamless).is_some()
+    }
+
+    /// Makes the seamless result the new base colour and switches the method
+    /// to None, so the texture can be retouched as it will tile. Undoable.
+    pub fn bake_seamless(&mut self) -> Result<()> {
+        let result = self.current(&self.seamless).ok_or(EngineError::RenderPending)?;
+        let image = Arc::clone(&result.image);
+        self.commit(image)?;
+        self.params.seamless.method = Method::None;
+        self.edited();
+        Ok(())
+    }
+
+    /// Makes `image`, an edit of the base colour such as a retouch stroke,
+    /// the new base colour. Undoable.
+    pub fn commit_base(&mut self, image: Image) -> Result<()> {
+        image.validate_dimensions()?;
+        self.commit(Arc::new(image))
+    }
+
     /// Commits `edit` of the base colour, leaving the document untouched
     /// when it fails.
     fn replace_base(
         &mut self,
         edit: impl FnOnce(&Image) -> seams_core::Result<Image>,
     ) -> Result<()> {
-        let document = self.document.as_mut().ok_or(EngineError::NoDocument)?;
+        let document = self.document.as_ref().ok_or(EngineError::NoDocument)?;
         let edited = Arc::new(edit(document.base())?);
+        self.commit(edited)
+    }
+
+    /// Makes `edited` the base colour and refreshes everything shown.
+    fn commit(&mut self, edited: Arc<Image>) -> Result<()> {
+        let document = self.document.as_mut().ok_or(EngineError::NoDocument)?;
         let display = DisplayImage::from_image(&edited, DISPLAY_MAX_SIDE)?;
         document.commit(edited);
         self.before = Some(self.new_view(display));
@@ -950,6 +980,38 @@ mod tests {
         let base = session.document().unwrap().base();
         assert_eq!((base.width(), base.height()), (100, 90));
         assert!(session.can_undo());
+    }
+
+    #[test]
+    fn baking_makes_the_result_the_base_and_stops_reprocessing_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut session = session();
+        open(&mut session, write_texture(dir.path(), "b.png", 128));
+        session.params.seamless.method = Method::Mirror;
+        session.edited();
+        pump(&mut session, settled);
+        assert!(session.can_bake_seamless());
+
+        session.bake_seamless().unwrap();
+        pump(&mut session, settled);
+
+        let base = session.document().unwrap().base();
+        assert_eq!((base.width(), base.height()), (256, 256), "the mirrored result");
+        assert_eq!(session.params.seamless.method, Method::None);
+        assert!(session.can_undo());
+    }
+
+    #[test]
+    fn a_retouch_commit_replaces_the_base_and_can_be_undone() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut session = session();
+        open(&mut session, write_texture(dir.path(), "r.png", 128));
+
+        session.commit_base(Image::filled(128, 128, 3, 0.25).unwrap()).unwrap();
+
+        assert_eq!(session.document().unwrap().base().data()[0], 0.25);
+        assert!(session.undo().unwrap());
+        assert!(session.commit_base(Image::filled(8, 8, 3, 0.0).unwrap()).is_err());
     }
 
     #[test]

@@ -27,6 +27,12 @@ pub const CHEVRON_DOWN: char = '\u{e06d}';
 pub const CROP: char = '\u{e0ab}';
 /// `rotate-cw`: the crop frame will turn.
 pub const ROTATE: char = '\u{e149}';
+/// `bandage`: the Retouch tool (clone and heal).
+pub const RETOUCH: char = '\u{e61d}';
+/// `scan-search`: the tiling check.
+pub const TILING_CHECK: char = '\u{e537}';
+/// `crosshair`: where the Retouch tool copies from.
+pub const SOURCE: char = '\u{e0ac}';
 /// `image-plus`: open a texture.
 pub const IMAGE_PLUS: char = '\u{e1f7}';
 

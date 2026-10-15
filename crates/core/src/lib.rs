@@ -21,8 +21,10 @@ pub mod image;
 pub mod key;
 pub mod pbr;
 pub mod perspective;
+pub mod retouch;
 pub mod rng;
 pub mod seamless;
+pub mod tiling;
 
 pub use error::{CoreError, Result};
 pub use image::Image;

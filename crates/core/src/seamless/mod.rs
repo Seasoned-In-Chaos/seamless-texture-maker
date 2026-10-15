@@ -33,11 +33,14 @@ pub enum Method {
     Overlap,
     /// Scatter rotated patches over a periodic layout (texture bombing).
     Splat,
+    /// Leave the image as it is: it already tiles, for example a result
+    /// made the base color to retouch its seams.
+    None,
 }
 
 impl Method {
-    pub const ALL: [Method; 4] =
-        [Method::OffsetCrossfade, Method::Mirror, Method::Overlap, Method::Splat];
+    pub const ALL: [Method; 5] =
+        [Method::OffsetCrossfade, Method::Mirror, Method::Overlap, Method::Splat, Method::None];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -45,6 +48,7 @@ impl Method {
             Method::Mirror => "Mirror tiling (2x2)",
             Method::Overlap => "Overlap blend",
             Method::Splat => "Splat synthesis",
+            Method::None => "None (already tiles)",
         }
     }
 
@@ -59,6 +63,10 @@ impl Method {
                 "Overlaps opposite edges and blends the join. Suits structured materials."
             }
             Method::Splat => "Scatters rotated patches. Suits irregular, organic materials.",
+            Method::None => {
+                "Leaves the image as it is. For a texture that already tiles, such as a \
+                 result made the base color to retouch."
+            }
         }
     }
 }
@@ -165,7 +173,7 @@ impl SeamlessParams {
         hasher.u64(p.method as u64);
         match p.method {
             Method::OffsetCrossfade => hasher.f32(p.fade_amount.0),
-            Method::Mirror => &mut hasher,
+            Method::Mirror | Method::None => &mut hasher,
             Method::Overlap => hasher.f32(p.overlap.x).f32(p.overlap.y).f32(p.overlap.falloff),
             Method::Splat => hasher
                 .f32(p.splat.scale)
@@ -195,6 +203,7 @@ pub fn make_seamless(image: &Image, params: &SeamlessParams) -> Result<Image> {
         Method::Mirror => mirror_tile(image),
         Method::Overlap => overlap_blend(image, &params.overlap),
         Method::Splat => splat(image, &params.splat),
+        Method::None => Ok(image.clone()),
     }
 }
 
@@ -259,13 +268,22 @@ mod tests {
     fn every_method_produces_a_tileable_result() {
         let source = sample(128, 96, 3);
 
-        for method in Method::ALL {
+        // None trusts the image to tile already; it is checked below.
+        for method in Method::ALL.into_iter().filter(|m| *m != Method::None) {
             let params = SeamlessParams { method, ..SeamlessParams::default() };
             let result = make_seamless(&source, &params).unwrap();
 
             assert!(wrap_discontinuity(&result) < 6.0, "{method:?} left a visible seam");
             assert!(result.data().iter().all(|v| (0.0..=1.0).contains(v)), "{method:?} range");
         }
+    }
+
+    #[test]
+    fn none_leaves_the_image_as_it_is() {
+        let source = sample(128, 96, 3);
+        let params = SeamlessParams { method: Method::None, ..SeamlessParams::default() };
+
+        assert_eq!(make_seamless(&source, &params).unwrap(), source);
     }
 
     #[test]

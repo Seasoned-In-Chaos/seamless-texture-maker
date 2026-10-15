@@ -7,6 +7,7 @@ use egui::{
 };
 
 use crate::crop::{CropTool, Mapping};
+use crate::retouch::RetouchTool;
 use crate::textures::Texture;
 use crate::theme::{SMALL_SIZE, TITLE_SIZE, TOKENS, icon_font, semibold};
 use crate::{icons, widgets};
@@ -71,6 +72,8 @@ pub struct Scene {
     pub tiles: usize,
     pub show_guides: bool,
     pub checker: TextureId,
+    /// The tiling check's marks, drawn over the result.
+    pub overlay: Option<TextureId>,
     pub loading: bool,
     pub files_hovering: bool,
 }
@@ -86,6 +89,21 @@ pub enum NavTool {
     /// The Zoom tool: a click steps in (Alt: out), a drag zooms
     /// continuously, right to zoom in and left to zoom out.
     Zoom,
+}
+
+/// A tool that works on the base color, shown on the canvas in its place.
+pub enum ImageTool<'a> {
+    Crop(&'a mut CropTool),
+    Retouch(&'a mut RetouchTool),
+}
+
+impl ImageTool<'_> {
+    fn reborrow(&mut self) -> ImageTool<'_> {
+        match self {
+            ImageTool::Crop(crop) => ImageTool::Crop(crop),
+            ImageTool::Retouch(retouch) => ImageTool::Retouch(retouch),
+        }
+    }
 }
 
 /// A Zoom-tool drag: where it began (relative to the view's middle) and
@@ -236,10 +254,11 @@ impl CanvasState {
         Placement { after, before: Some(before) }
     }
 
-    /// Draws the canvas and handles its input. With the Crop tool open, the
-    /// base color is shown alone under the crop frame. Returns true when the
-    /// empty state's open button was clicked.
-    pub fn show(&mut self, ui: &mut Ui, scene: &Scene, mut crop: Option<&mut CropTool>) -> bool {
+    /// Draws the canvas and handles its input. With an image tool open, the
+    /// base color is shown (tiled, for the Retouch tool in the Tiled view)
+    /// and the tool takes primary drags. Returns true when the empty state's
+    /// open button was clicked.
+    pub fn show(&mut self, ui: &mut Ui, scene: &Scene, mut tool: Option<ImageTool<'_>>) -> bool {
         let (whole, response) =
             ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
         let painter = ui.painter_at(whole);
@@ -252,12 +271,20 @@ impl CanvasState {
             whole
         };
 
-        let shown = if crop.is_some() { scene.before.or(scene.after) } else { scene.after };
-        let Some(after) = shown else {
+        let shown = match &tool {
+            Some(ImageTool::Retouch(retouch)) => retouch.texture().or(scene.before),
+            Some(ImageTool::Crop(_)) => scene.before,
+            None => scene.after,
+        };
+        let Some(after) = shown.or(scene.after) else {
             let button_clicked = show_placeholder(ui, area, scene);
             return button_clicked || (!scene.loading && response.double_clicked());
         };
-        let mode = if crop.is_some() { ViewMode::Result } else { self.effective_mode(scene) };
+        let mode = match &tool {
+            Some(ImageTool::Retouch(_)) if self.mode == ViewMode::Tiled => ViewMode::Tiled,
+            Some(_) => ViewMode::Result,
+            None => self.effective_mode(scene),
+        };
         let (content, gap) = Self::content_size(mode, after.full_size, scene.tiles);
         if self.fit {
             self.zoom = Self::fit_zoom(area, content, gap);
@@ -270,7 +297,7 @@ impl CanvasState {
             area,
             mode,
             &placement,
-            crop.as_deref_mut().map(|tool| (tool, map)),
+            tool.as_mut().map(|t| (t.reborrow(), map)),
         );
         // As in Photoshop with Overscroll off: the image cannot be lost off
         // screen, whatever moved it this frame.
@@ -278,8 +305,12 @@ impl CanvasState {
 
         let placement = self.place(area, mode, after.full_size, scene.tiles);
         self.paint(&painter, scene, after, mode, &placement);
-        if let Some(tool) = crop {
-            tool.paint(&painter, Mapping::new(placement.after, after.full_size));
+        match tool {
+            Some(ImageTool::Crop(crop)) => {
+                crop.paint(&painter, Mapping::new(placement.after, after.full_size));
+            }
+            Some(ImageTool::Retouch(retouch)) => retouch.paint(&painter),
+            None => {}
         }
         if let Some((at, icon)) = self.tool_cursor {
             icons::paint_cursor(&painter, at, icon);
@@ -294,7 +325,7 @@ impl CanvasState {
         area: Rect,
         mode: ViewMode,
         placement: &Placement,
-        crop: Option<(&mut CropTool, Mapping)>,
+        image_tool: Option<(ImageTool<'_>, Mapping)>,
     ) {
         let pointer = response.hover_pos();
         // Holding Space borrows the pan tool, unless the keys are for a text field.
@@ -302,11 +333,15 @@ impl CanvasState {
             ui.input(|i| i.key_down(Key::Space)) && !ui.ctx().egui_wants_keyboard_input();
         let panning = self.tool == NavTool::Pan || space_held;
         let zooming = self.tool == NavTool::Zoom && !space_held;
-        // The Crop tool takes primary drags unless a view tool or Space is
+        // An image tool takes primary drags unless a view tool or Space is
         // in charge; a middle drag pans either way.
-        let cropping = crop.is_some() && !panning && !zooming;
-        if let Some((tool, map)) = crop.filter(|_| cropping) {
-            tool.interact(ui, response, map);
+        let cropping = image_tool.is_some() && !panning && !zooming;
+        match image_tool.filter(|_| cropping) {
+            Some((ImageTool::Crop(crop), map)) => crop.interact(ui, response, map),
+            Some((ImageTool::Retouch(retouch), map)) => {
+                retouch.interact(ui.ctx(), ui, response, map, mode == ViewMode::Tiled);
+            }
+            None => {}
         }
         if zooming {
             self.zoom_tool(ui, response, area);
@@ -344,8 +379,8 @@ impl CanvasState {
             self.dragging_split = false;
             self.scrub = None;
         }
-        // With the Zoom tool, clicks zoom; a double-click is two of them.
-        if response.double_clicked() && !zooming {
+        // With the Zoom tool or an image tool, clicks act; a double-click is two of them.
+        if response.double_clicked() && !zooming && !cropping {
             self.fit_to_window();
         }
         if let Some(pointer) = pointer {
@@ -437,6 +472,17 @@ impl CanvasState {
                 }
                 draw_image(painter, scene.checker, after.id, frame, FULL_UV);
                 draw_tag(painter, frame.left_top(), Align2::LEFT_TOP, "After");
+            }
+        }
+        if let Some(overlay) = scene.overlay {
+            // Over every copy of the result: each tile in the tiled view.
+            let tiles = if mode == ViewMode::Tiled { scene.tiles.max(1) } else { 1 };
+            let tile = frame.size() / tiles as f32;
+            for row in 0..tiles {
+                for column in 0..tiles {
+                    let min = frame.min + vec2(column as f32 * tile.x, row as f32 * tile.y);
+                    painter.image(overlay, Rect::from_min_size(min, tile), FULL_UV, Color32::WHITE);
+                }
             }
         }
         draw_rim(painter, frame);

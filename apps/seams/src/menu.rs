@@ -72,6 +72,10 @@ fn edit_menu(app: &mut SeamsApp, ui: &mut Ui) {
     let (has_document, cropping) = (app.has_document(), app.crop.is_some());
     choice(app, ui, &actions::CROP, cropping, has_document);
     item(app, ui, &actions::PERSPECTIVE_CROP, has_document);
+    let retouching = app.retouch.is_some();
+    choice(app, ui, &actions::RETOUCH, retouching, has_document);
+    let can_bake = app.session.can_bake_seamless();
+    item(app, ui, &actions::BAKE_SEAMLESS, can_bake);
     item(app, ui, &actions::APPLY_DELIGHT, can_apply);
 }
 
@@ -91,6 +95,8 @@ fn view_menu(app: &mut SeamsApp, ui: &mut Ui) {
     }
     let guides = app.settings.view.show_guides;
     choice(app, ui, &actions::TOGGLE_GUIDES, guides, has_document);
+    let checking = app.tiling.on;
+    choice(app, ui, &actions::TILING_CHECK, checking, has_document);
     let tool = app.canvas.tool;
     choice(app, ui, &actions::PAN_TOOL, tool == NavTool::Pan, has_document);
     choice(app, ui, &actions::ZOOM_TOOL, tool == NavTool::Zoom, has_document);
