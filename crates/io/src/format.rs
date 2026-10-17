@@ -1,4 +1,4 @@
-﻿//! File formats, sample depths and the metadata kept alongside an image.
+//! File formats, sample depths and the metadata kept alongside an image.
 
 use std::path::Path;
 
@@ -16,14 +16,22 @@ pub enum FileFormat {
     Tiff,
     Tga,
     Exr,
+    Psd,
 }
 
 impl FileFormat {
-    pub const ALL: [FileFormat; 5] =
-        [FileFormat::Png, FileFormat::Jpeg, FileFormat::Tiff, FileFormat::Tga, FileFormat::Exr];
+    pub const ALL: [FileFormat; 6] = [
+        FileFormat::Png,
+        FileFormat::Jpeg,
+        FileFormat::Tiff,
+        FileFormat::Tga,
+        FileFormat::Exr,
+        FileFormat::Psd,
+    ];
 
     /// Extensions accepted when opening files.
-    pub const EXTENSIONS: [&'static str; 7] = ["png", "jpg", "jpeg", "tif", "tiff", "tga", "exr"];
+    pub const EXTENSIONS: [&'static str; 9] =
+        ["png", "jpg", "jpeg", "tif", "tiff", "tga", "exr", "psd", "psb"];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -32,6 +40,7 @@ impl FileFormat {
             FileFormat::Tiff => "TIFF",
             FileFormat::Tga => "TGA",
             FileFormat::Exr => "EXR",
+            FileFormat::Psd => "PSD",
         }
     }
 
@@ -43,6 +52,7 @@ impl FileFormat {
             FileFormat::Tiff => "tiff",
             FileFormat::Tga => "tga",
             FileFormat::Exr => "exr",
+            FileFormat::Psd => "psd",
         }
     }
 
@@ -53,6 +63,8 @@ impl FileFormat {
             "tif" | "tiff" => Some(FileFormat::Tiff),
             "tga" => Some(FileFormat::Tga),
             "exr" => Some(FileFormat::Exr),
+            // PSB (large document) files are read; SEAMS writes PSD.
+            "psd" | "psb" => Some(FileFormat::Psd),
             _ => None,
         }
     }
@@ -66,7 +78,7 @@ impl FileFormat {
 
     /// Whether the format can store 16-bit integer samples.
     pub fn supports_sixteen_bit(self) -> bool {
-        matches!(self, FileFormat::Png | FileFormat::Tiff)
+        matches!(self, FileFormat::Png | FileFormat::Tiff | FileFormat::Psd)
     }
 
     pub fn supports_alpha(self) -> bool {

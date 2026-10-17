@@ -2116,6 +2116,7 @@ dependencies = [
 name = "seams-io"
 version = "4.0.0"
 dependencies = [
+ "flate2",
  "image",
  "log",
  "png",

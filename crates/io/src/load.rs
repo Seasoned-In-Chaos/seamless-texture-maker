@@ -27,6 +27,9 @@ pub struct Loaded {
 /// oversized file is rejected without allocating for it.
 pub fn load(path: &Path) -> Result<Loaded> {
     let bytes = read_file(path)?;
+    if bytes.starts_with(crate::psd::SIGNATURE) {
+        return load_psd(path, &bytes);
+    }
     let reader = guessed_reader(&bytes, path)?;
     let format = detected_format(&reader, path)?;
     check_dimensions(&bytes, path)?;
@@ -46,6 +49,34 @@ pub fn load(path: &Path) -> Result<Loaded> {
         file_size: bytes.len() as u64,
     };
     log::info!("loaded {} ({}x{}, {})", path.display(), meta.width, meta.height, bit_depth.label());
+    Ok(Loaded { image, meta })
+}
+
+/// Photoshop files are read by SEAMS itself: the image crate has no decoder.
+fn load_psd(path: &Path, bytes: &[u8]) -> Result<Loaded> {
+    let (width, height) = crate::psd::dimensions(bytes).map_err(|e| decode_error(path, e))?;
+    if width > MAX_DIMENSION || height > MAX_DIMENSION {
+        return Err(seams_core::CoreError::TooLarge { width, height, max: MAX_DIMENSION }.into());
+    }
+    let decoded = crate::psd::decode(bytes).map_err(|e| decode_error(path, e))?;
+    let mut image = decoded.image;
+    image.sanitize();
+    let meta = ImageMeta {
+        width: image.width(),
+        height: image.height(),
+        channels: image.channels(),
+        bit_depth: decoded.bit_depth,
+        format: FileFormat::Psd,
+        dpi: decoded.dpi,
+        file_size: bytes.len() as u64,
+    };
+    log::info!(
+        "loaded {} ({}x{}, {})",
+        path.display(),
+        meta.width,
+        meta.height,
+        meta.bit_depth.label()
+    );
     Ok(Loaded { image, meta })
 }
 

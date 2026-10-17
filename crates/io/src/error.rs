@@ -24,7 +24,7 @@ pub enum IoError {
     #[error("could not encode as {format}: {reason}")]
     Encode { format: &'static str, reason: String },
 
-    #[error("unsupported file type `{0}` (use PNG, JPG, TIFF, TGA or EXR)")]
+    #[error("unsupported file type `{0}` (use PNG, JPG, TIFF, TGA, EXR or PSD)")]
     UnsupportedFormat(String),
 
     #[error(transparent)]
