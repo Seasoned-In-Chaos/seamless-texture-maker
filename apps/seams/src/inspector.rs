@@ -3,7 +3,7 @@
 use egui::{DragValue, Frame, Margin, Panel, ScrollArea, Ui};
 use seams_core::delight::DelightParams;
 use seams_core::pbr::{HeightSource, MapKind, MaterialParams, NormalFilter, NormalFormat};
-use seams_core::retouch::RetouchMode;
+use seams_core::retouch::{RetouchMode, SpotMethod};
 use seams_core::seamless::{Method, OverlapParams, SeamlessParams, SplatParams};
 use seams_engine::{Channel, SaveMode, Stage};
 use seams_io::FileFormat;
@@ -299,21 +299,43 @@ fn material(app: &mut SeamsApp, ui: &mut Ui) {
     }
 }
 
-const RETOUCH_MODES: [(RetouchMode, &str); 2] =
-    [(RetouchMode::Heal, "Heal"), (RetouchMode::Clone, "Clone")];
+const RETOUCH_MODES: [(RetouchMode, &str); 3] = [
+    (RetouchMode::Heal, "Heal"),
+    (RetouchMode::Clone, "Clone"),
+    (RetouchMode::SpotHeal, "Spot heal"),
+];
+const SPOT_METHODS: [(SpotMethod, &str); 2] =
+    [(SpotMethod::ContentAware, "Content-aware"), (SpotMethod::ProximityMatch, "Proximity")];
 
 /// The Retouch tool's options, shown in place of the stage's while it is open.
 fn retouch_panel(app: &mut SeamsApp, ui: &mut Ui) {
     let Some(tool) = app.retouch.as_mut() else { return };
-    widgets::section(ui, "Mode", |ui| {
+    widgets::section(ui, "Tool", |ui| {
         if let Some(mode) = widgets::segmented(ui, Some(tool.mode), &RETOUCH_MODES) {
             tool.mode = mode;
         }
         let what = match tool.mode {
-            RetouchMode::Heal => "Copies detail and matches the colour where it lands.",
-            RetouchMode::Clone => "Copies pixels exactly.",
+            RetouchMode::Heal => {
+                "Copies detail from the source and matches it to the colour and light where it lands."
+            }
+            RetouchMode::Clone => "Copies the source's pixels exactly.",
+            RetouchMode::SpotHeal => {
+                "Paint over a blemish: it is filled from what surrounds it. No source needed."
+            }
         };
         widgets::hint(ui, what);
+        if tool.mode == RetouchMode::SpotHeal {
+            if let Some(method) = widgets::segmented(ui, Some(tool.spot), &SPOT_METHODS) {
+                tool.spot = method;
+            }
+            let how = match tool.spot {
+                SpotMethod::ContentAware => {
+                    "Rebuilds the area patch by patch from its surroundings."
+                }
+                SpotMethod::ProximityMatch => "Copies the nearby area that matches best. Faster.",
+            };
+            widgets::hint(ui, how);
+        }
     });
     widgets::section(ui, "Brush", |ui| {
         let mut size = tool.brush.radius * 2.0;
@@ -326,17 +348,41 @@ fn retouch_panel(app: &mut SeamsApp, ui: &mut Ui) {
             tool.brush.radius = (size / 2.0).clamp(MIN_RADIUS, MAX_RADIUS);
         }
         widgets::slider(ui, "Hardness", &mut tool.brush.hardness, 0.0..=1.0, Unit::Percent);
-        widgets::slider(ui, "Opacity", &mut tool.brush.opacity, 0.0..=1.0, Unit::Percent);
+        widgets::slider(ui, "Opacity", &mut tool.brush.opacity, 0.01..=1.0, Unit::Percent);
+        widgets::slider(ui, "Flow", &mut tool.brush.flow, 0.01..=1.0, Unit::Percent);
+        widgets::slider(ui, "Spacing", &mut tool.brush.spacing, 0.01..=2.0, Unit::Percent);
+        widgets::slider(ui, "Smoothing", &mut tool.smoothing, 0.0..=0.95, Unit::Percent);
+        widgets::hint(
+            ui,
+            "Lower hardness gives a softer edge. Opacity caps a stroke; flow sets how fast overlapping dabs build up to it. Smoothing steadies a shaky line.",
+        );
+    });
+    widgets::section(ui, "Options", |ui| {
+        if tool.mode != RetouchMode::SpotHeal {
+            widgets::checkbox(ui, &mut tool.aligned, "Aligned");
+            widgets::checkbox(ui, &mut tool.overlay, "Show source under the brush");
+        }
         widgets::checkbox(ui, &mut tool.wrap, "Wrap around edges");
     });
-    let source = if tool.has_source() { "Source set." } else { "No source yet." };
+    if tool.mode != RetouchMode::SpotHeal {
+        widgets::section(ui, "Source", |ui| {
+            let status = if tool.has_source() {
+                "Source set."
+            } else {
+                "No source yet: Alt-click where to copy from."
+            };
+            widgets::hint(ui, status);
+            if tool.has_source() && ui.button("Clear source").clicked() {
+                tool.clear_source();
+            }
+        });
+    }
+    if tool.is_healing() {
+        widgets::hint(ui, "Healing the last stroke…");
+    }
     widgets::hint(
         ui,
-        &format!(
-            "{source} Alt-click where to copy from, then paint. [ and ] change the size. With \
-             Wrap on, strokes continue across the edges, so the texture keeps tiling; paint over \
-             tile borders in the Tiled view."
-        ),
+        "[ and ] change the size, Shift+[ and Shift+] the hardness. 1 to 0 set the opacity, Shift with them the flow. Alt+right-drag on the canvas: sideways for size, up and down for hardness. With Wrap on, strokes continue across the edges, so the texture keeps tiling; paint over tile borders in the Tiled view.",
     );
     ui.add_space(12.0);
     if ui.button("Done").clicked() {

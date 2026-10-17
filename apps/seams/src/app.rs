@@ -180,7 +180,7 @@ impl SeamsApp {
                 // nothing on this one.
                 self.crop = None;
                 if self.retouch.is_some() {
-                    self.retouch = Some(RetouchTool::default());
+                    self.retouch = Some(RetouchTool::new(&self.settings.retouch));
                 }
                 self.settings.remember_file(&path);
                 self.channel = Channel::BaseColor;
@@ -460,7 +460,7 @@ impl SeamsApp {
     fn toggle_retouch(&mut self) {
         if self.retouch.take().is_none() && self.has_document() {
             self.crop = None;
-            self.retouch = Some(RetouchTool::default());
+            self.retouch = Some(RetouchTool::new(&self.settings.retouch));
         }
     }
 
@@ -548,8 +548,11 @@ impl eframe::App for SeamsApp {
         if let Some(retouch) = &mut self.retouch {
             if self.session.document().is_none() {
                 self.retouch = None;
-            } else if self.dialog == Dialog::None {
-                retouch.keys(ctx);
+            } else {
+                if self.dialog == Dialog::None {
+                    retouch.keys(ctx);
+                }
+                self.settings.retouch = retouch.settings();
             }
         }
         self.collect_shortcuts(ctx);

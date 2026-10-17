@@ -290,7 +290,17 @@ impl CanvasState {
             self.zoom = Self::fit_zoom(area, content, gap);
         }
         let placement = self.place(area, mode, after.full_size, scene.tiles);
-        let map = Mapping::new(placement.after, after.full_size);
+        // In the tiled view the first tile is the image: the rest are copies of it, so
+        // a pointer over any tile maps to image pixels past the first tile (and wraps).
+        let tile = if mode == ViewMode::Tiled {
+            Rect::from_min_size(
+                placement.after.min,
+                placement.after.size() / scene.tiles.max(1) as f32,
+            )
+        } else {
+            placement.after
+        };
+        let map = Mapping::new(tile, after.full_size);
         self.handle_input(
             ui,
             &response,
@@ -309,7 +319,18 @@ impl CanvasState {
             Some(ImageTool::Crop(crop)) => {
                 crop.paint(&painter, Mapping::new(placement.after, after.full_size));
             }
-            Some(ImageTool::Retouch(retouch)) => retouch.paint(&painter),
+            Some(ImageTool::Retouch(retouch)) => {
+                let tile = if mode == ViewMode::Tiled {
+                    Rect::from_min_size(
+                        placement.after.min,
+                        placement.after.size() / scene.tiles.max(1) as f32,
+                    )
+                } else {
+                    placement.after
+                };
+                let view = (after.id, Mapping::new(tile, after.full_size), after.full_size);
+                retouch.paint(&painter, Some(view));
+            }
             None => {}
         }
         if let Some((at, icon)) = self.tool_cursor {
@@ -654,7 +675,7 @@ fn show_placeholder(ui: &mut Ui, area: Rect, scene: &Scene) -> bool {
         .allocate_ui(CHOOSE_BUTTON_SIZE, |ui| widgets::primary_button(ui, "Choose file", true));
     let clicked = button.inner.clicked();
     content.add_space(10.0);
-    widgets::hint(&mut content, "PNG, JPG, TIFF, TGA or EXR. 64 to 8192 px per side.");
+    widgets::hint(&mut content, "PNG, JPG, TIFF, TGA, EXR or PSD. 64 to 8192 px per side.");
     clicked
 }
 

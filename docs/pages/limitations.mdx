@@ -51,11 +51,15 @@ description: Known limitations and constraints in SEAMS.
 
 - **Perspective crop samples bilinearly**, so a heavily straightened result is slightly softer than the source.
 - **A turned or perspective crop repeats edge pixels** where it reaches past the image.
+- **Healing works on one image.** Spot heal and Heal read only the texture itself. A stroke bigger than the texture with Wrap on is solved over one copy of it.
+- **Spot heal's content-aware fill takes longer on big strokes**, up to a second or two on 4K textures. It runs in the background.
 - **The tiling check works on a small grey copy**, so it finds visible seams and strong repeats, not fine detail.
 
 ## Drag & Drop
 
-- **Only PNG, JPG, TIFF, TGA and EXR files** open. Other files are rejected with a message.
+- **Only PNG, JPG, TIFF, TGA, EXR and PSD/PSB files** open. Other files are rejected with a message.
+- **PSD files open flattened.** SEAMS uses the merged image Photoshop saves with "Maximize compatibility". Without it, SEAMS composites the visible pixel layers itself with normal blending: blend modes, masks, adjustment layers and layer effects are not applied. Lab and multichannel files are rejected; CMYK is converted without colour management.
+- **PSD export is flat.** An opaque image is saved as a flat file; an image with alpha is saved as one layer so the transparency survives.
 
 ## Float Images
 

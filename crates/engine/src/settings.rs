@@ -2,6 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
+use seams_core::retouch::{Brush, RetouchMode, SpotMethod};
 use seams_io::FileFormat;
 use serde::{Deserialize, Serialize};
 
@@ -29,6 +30,53 @@ impl Default for ViewSettings {
     }
 }
 
+/// The Retouch tool's options, kept from one use to the next as Photoshop does.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RetouchSettings {
+    pub mode: RetouchMode,
+    pub spot: SpotMethod,
+    pub brush: Brush,
+    /// Stroke smoothing, `0..=0.95`.
+    pub smoothing: f32,
+    pub aligned: bool,
+    pub wrap: bool,
+    /// Show the source inside the brush before painting.
+    pub overlay: bool,
+}
+
+impl Default for RetouchSettings {
+    fn default() -> Self {
+        Self {
+            mode: RetouchMode::Heal,
+            spot: SpotMethod::ContentAware,
+            brush: Brush::default(),
+            smoothing: 0.1,
+            aligned: true,
+            wrap: true,
+            overlay: true,
+        }
+    }
+}
+
+impl RetouchSettings {
+    /// Every value back in range; anything unusable takes its default.
+    pub fn sanitized(mut self) -> Self {
+        let defaults = Self::default();
+        let fix = |value: f32, lo: f32, hi: f32, fallback: f32| {
+            if value.is_finite() { value.clamp(lo, hi) } else { fallback }
+        };
+        let (brush, base) = (&mut self.brush, defaults.brush);
+        brush.radius = fix(brush.radius, 1.0, 1000.0, base.radius);
+        brush.hardness = fix(brush.hardness, 0.0, 1.0, base.hardness);
+        brush.opacity = fix(brush.opacity, 0.01, 1.0, base.opacity);
+        brush.flow = fix(brush.flow, 0.01, 1.0, base.flow);
+        brush.spacing = fix(brush.spacing, 0.01, 2.0, base.spacing);
+        self.smoothing = fix(self.smoothing, 0.0, 0.95, defaults.smoothing);
+        self
+    }
+}
+
 /// Size of the main window when it was last closed.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct WindowSettings {
@@ -52,6 +100,7 @@ pub struct Settings {
     pub recent_files: Vec<PathBuf>,
     pub view: ViewSettings,
     pub window: Option<WindowSettings>,
+    pub retouch: RetouchSettings,
 }
 
 impl Settings {
@@ -109,6 +158,7 @@ impl Settings {
         self.recent_files.truncate(MAX_RECENT_FILES);
         self.last_directory = self.last_directory.filter(|dir| !dir.as_os_str().is_empty());
         self.window = self.window.filter(|w| w.width.is_finite() && w.height.is_finite());
+        self.retouch = self.retouch.sanitized();
         self
     }
 }
@@ -125,6 +175,25 @@ pub fn app_data_dir() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retouch_options_survive_a_round_trip_and_bad_values_are_fixed() {
+        let mut settings = Settings::default();
+        settings.retouch.brush.radius = 120.0;
+        settings.retouch.mode = RetouchMode::SpotHeal;
+        let text = serde_json::to_string(&settings).unwrap();
+        let back: Settings = serde_json::from_str(&text).unwrap();
+        assert_eq!(back.retouch, settings.retouch);
+
+        let mut broken = RetouchSettings::default();
+        broken.brush.radius = f32::NAN;
+        broken.brush.flow = 7.0;
+        broken.smoothing = -1.0;
+        let fixed = broken.sanitized();
+        assert_eq!(fixed.brush.radius, Brush::default().radius);
+        assert_eq!(fixed.brush.flow, 1.0);
+        assert_eq!(fixed.smoothing, 0.0);
+    }
 
     #[test]
     fn missing_file_gives_defaults() {

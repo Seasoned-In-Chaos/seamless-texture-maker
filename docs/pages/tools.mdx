@@ -27,17 +27,39 @@ For a photo of a wall, floor or sheet shot at an angle. Drag each corner onto a 
 
 ## Retouch (`J`)
 
-Clone and heal, for painting out seams and blemishes.
+Photoshop's Clone Stamp, Healing Brush and Spot Healing Brush, for painting out seams and blemishes.
 
-1. **Alt-click** where to copy from.
-2. Paint. The distance to the source is kept for later strokes.
+1. For **Heal** and **Clone**, **Alt-click** where to copy from. Before you paint, the brush shows the source inside its circle.
+2. Paint. **Spot heal** needs no source: paint over the blemish.
 
 | Mode | What it does |
 |---|---|
-| **Heal** | Copies the source's detail and matches the color and brightness where it lands |
+| **Heal** | Copies the source's detail. When you release, the whole stroke is matched to the color and brightness where it landed, with no seams between dabs |
 | **Clone** | Copies pixels exactly |
+| **Spot heal** | Fills the stroke from what surrounds it: **Content-aware** rebuilds it patch by patch, **Proximity** copies the best-matching nearby area |
 
-Size, hardness and opacity are in the inspector; `[` and `]` change the size. With **Wrap around edges** on, strokes continue across the edges, so a tileable texture stays tileable. In the **Tiled** view you can paint over the tile borders.
+Healing runs in the background after you release; the stroke shows as a clone (or, for Spot heal, a dark mark) until it finishes. Each stroke is one undo step.
+
+### Brush
+
+| Setting | What it does |
+|---|---|
+| **Size** | Diameter in image pixels |
+| **Hardness** | 100 % is a hard edge; lower is softer. The inner ring of the cursor shows the hard core |
+| **Opacity** | The most a stroke covers |
+| **Flow** | How much each dab adds: low flow builds up gradually under the opacity cap |
+| **Spacing** | Distance between dabs, as a share of the diameter |
+| **Smoothing** | Steadies a shaky line: the brush trails the pointer and catches up |
+
+**Aligned** keeps the distance between brush and source from stroke to stroke; off, every stroke starts from the source point again. With **Wrap around edges** on, strokes and the source continue across the edges, so a tileable texture stays tileable. In the **Tiled** view you can paint over the tile borders. The options are remembered.
+
+| Key | Does |
+|---|---|
+| `[` / `]` | Smaller / larger brush |
+| `Shift+[` / `Shift+]` | Softer / harder |
+| `1` … `0` | Opacity 10 % … 100 % |
+| `Shift+1` … `Shift+0` | Flow 10 % … 100 % |
+| `Alt`+right-drag | On the canvas: sideways sets the size, up and down the hardness |
 
 ### Fixing seams a method left
 
