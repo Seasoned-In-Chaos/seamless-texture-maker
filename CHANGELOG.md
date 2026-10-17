@@ -7,8 +7,19 @@ and this project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [4.1.0] - 2026-10-18
+
 ### Added
-- A Retouch tool (`J`, Edit › Retouch, or the bandage in the view bar): clone and heal. Alt-click where to copy from, then paint; the distance to the source is kept for later strokes. Heal copies the source's detail and matches the color and brightness where it lands; Clone copies exactly. Size, hardness and opacity are in the inspector, and `[` and `]` change the size. With **Wrap around edges** on, strokes continue across the edges so the texture keeps tiling, including over tile borders in the Tiled view. Each stroke is one undo step.
+- A Retouch tool (`J`, Edit › Retouch, or the bandage in the view bar) with Photoshop's three healing tools:
+  - **Heal**: Alt-click a source, then paint. The stroke shows the copied texture while you draw; on release the whole stroke is matched to the colour and brightness where it landed in one pass, so there are no seams between dabs. Healing runs in the background.
+  - **Clone**: copies the source's pixels exactly.
+  - **Spot heal**: no source needed. Paint over a blemish and it is filled from its surroundings, by **Content-aware** fill (PatchMatch) or **Proximity** match.
+  - Brush controls as in Photoshop: size, hardness, opacity, flow, spacing and smoothing. Flow builds a stroke up under the opacity cap; smoothing steadies a shaky line.
+  - **Aligned** keeps the brush-to-source distance between strokes; off, each stroke starts from the source again. The brush shows the source inside its circle before painting, and an inner ring marks the hard core of a soft brush.
+  - Keys: `[` and `]` size, `Shift+[` and `Shift+]` hardness, `1`–`0` opacity, `Shift+1`–`0` flow, and Alt+right-drag on the canvas for size (sideways) and hardness (up and down).
+  - With **Wrap around edges** on, strokes continue across the edges so the texture keeps tiling, including over tile borders in the Tiled view. Each stroke is one undo step, and the options are remembered.
+- Photoshop PSD files open and export. PSD and PSB open in 8, 16 and 32-bit, in RGB, grayscale, CMYK and indexed colour, with transparency and resolution. Files saved without "Maximize compatibility" are built from their visible layers. Export writes 8- or 16-bit PSD: flat when opaque, one layer when the image has alpha.
+- A 30-second introduction video, linked from the top of the README.
 - **Use result as base** (Seamless stage, or Edit menu): makes the seamless result the base color and sets the new method **None (already tiles)**, so the result can be retouched without being processed again.
 - A tiling check (`Ctrl+Shift+T`, View menu, or the scan icon in the view bar). It marks seams in red, including the line where the texture wraps, and repeated areas in orange, on the canvas and on every tile in the Tiled view, and summarizes both in the inspector.
 - A documentation page for the Crop, Retouch and tiling-check tools.
