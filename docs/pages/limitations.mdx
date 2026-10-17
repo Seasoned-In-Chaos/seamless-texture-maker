@@ -11,61 +11,56 @@ description: Known limitations and constraints in SEAMS.
 |---|---|
 | Minimum image size | 64 × 64 pixels |
 | Maximum image size | 8192 × 8192 pixels |
-| Maximum undo steps | 20 |
-| Maximum redo steps | 20 |
-| Maximum recent files | 10 |
+| Undo steps | 20, within a 1.5 GB memory budget |
+| Recent files | 10 |
 
 ## Platform
 
-- **Windows only** — The single-instance mutex is Windows-specific
-- **No macOS or Linux support** — The app may run on other platforms but mutex enforcement won't work
+- **Windows is the supported platform.** The code is cross-platform, but only Windows builds are produced and tested.
 
 ## Theme
 
-- **Dark theme only** — There is no light mode option. The entire UI is built around the dark theme (`#07080c` background, purple-to-teal accents).
+- **One dark theme.** There is no light mode.
 
-## GPU Monitoring
+## Previews and the GPU
 
-- **NVIDIA only** — The system monitor's GPU bar only appears when `nvidia-smi` is available. AMD and Intel GPUs are not supported for monitoring.
+- **Export always uses the CPU.** The GPU draws the live previews only; tests hold the two within one 8-bit step.
+- **Splat synthesis and delighting are previewed on the CPU.** So are images beyond the GPU's texture limit and machines without a usable GPU. Help › About shows which is in use.
+- **No NVIDIA-only acceleration.** The CUDA path of the earlier Python version is gone; Splat runs on all CPU cores.
 
 ## Splat Synthesis
 
-- **Fixed random seed (42)** — There is no user control for the seed. All Splat outputs are deterministic for the same input and parameters.
-- **Patch cache** — Rotated patch variations are cached with LRU eviction (max 8 entries). Changing rotation or scale requires patch regeneration.
+- **The seed is a control**, set with the Shuffle button. The same input, settings and seed always give the same result.
 
-## 3D Viewport
+## Material Maps
 
-- **Only 3 meshes exposed** — Sphere, Cube, and Plane are available in the UI. Wall, Floor Tile, and Rounded Cube are built internally but not exposed.
-- **OpenGL 2.1 required** — The 3D viewport requires a compatibility profile OpenGL 2.1 context. This is not available on some virtual machines or remote desktop setups.
-
-## Material Lab
-
-- **PBR from grayscale only** — All PBR maps are derived from the grayscale luminance of the input image. There are no per-channel controls or color-aware map generation.
+- **Maps are derived from the seamless base color** through a height field chosen by *Height source*. A generated map cannot be run through a seamless method on its own.
 
 ## Export
 
-- **No material sidecars** — Renderer export writes selected texture maps only. Material node/script generation is intentionally not part of the export pipeline.
-- **Resolution resizes, not supersamples** — Selecting a higher resolution than the source upscales the image. It does not add detail.
-- **JPEG alpha stripped** — JPEG format does not support transparency. Alpha channels are automatically removed.
+- **No material scripts.** SEAMS writes texture files only.
+- **Scalar maps are single-channel** unless the source has alpha.
+- **Resizing is not applied on export.** The result keeps its size.
+- **JPEG drops alpha.**
 
 ## Delight
 
-- **Destructive apply** — Applying delight modifies the base image. The previous state is pushed to the undo stack (max 20 steps), but there is no non-destructive mode.
-- **Sliders reset after apply** — All delight sliders are reset to 0 after applying. To re-delight, you must re-adjust sliders.
+- **Applying is destructive**, though undoable. After applying, the sliders reset to 0.
 
-## Large-image processing
+## Crop, Retouch and Check
 
-- **Global seamless canvas** — Every seamless method processes the complete image up to 8192×8192. This preserves the edge and periodic relationships that make the exported texture tile correctly.
-- **Memory use** — 8K processing uses substantially more memory, especially Splat Synthesis. When memory is constrained, Splat automatically reduces the number of cached patch variations while keeping one seamless global result.
+- **Perspective crop samples bilinearly**, so a heavily straightened result is slightly softer than the source.
+- **A turned or perspective crop repeats edge pixels** where it reaches past the image.
+- **Healing works on one image.** Spot heal and Heal read only the texture itself. A stroke bigger than the texture with Wrap on is solved over one copy of it.
+- **Spot heal's content-aware fill takes longer on big strokes**, up to a second or two on 4K textures. It runs in the background.
+- **The tiling check works on a small grey copy**, so it finds visible seams and strong repeats, not fine detail.
 
 ## Drag & Drop
 
-- **Limited formats** — Only `.png`, `.jpg`, `.jpeg`, `.tiff`, `.tif`, `.tga`, `.exr` are accepted. Other formats are silently rejected.
+- **Only PNG, JPG, TIFF, TGA, EXR and PSD/PSB files** open. Other files are rejected with a message.
+- **PSD files open flattened.** SEAMS uses the merged image Photoshop saves with "Maximize compatibility". Without it, SEAMS composites the visible pixel layers itself with normal blending: blend modes, masks, adjustment layers and layer effects are not applied. Lab and multichannel files are rejected; CMYK is converted without colour management.
+- **PSD export is flat.** An opaque image is saved as a flat file; an image with alpha is saved as one layer so the transparency survives.
 
-## Float Image Handling
+## Float Images
 
-- **NaN/Inf replacement** — NaN values are replaced with 0, Inf values are replaced with 1 or 0, silently on load. No warning is shown.
-
-## DPI Scaling
-
-- **PassThrough policy** — SEAMS uses `PassThrough` DPI rounding which respects native OS scaling. The `Round` policy (used previously) caused windows to overflow on 125% scaling. If you experience sizing issues, see [Troubleshooting](/pages/troubleshooting#window-too-large--off-screen).
+- **NaN and infinite values are replaced** on load (NaN with 0, infinities with the ends of the range) without a warning.

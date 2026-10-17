@@ -12,13 +12,15 @@ use seams_engine::{
 use seams_io::FileFormat;
 
 use crate::actions::{ALIASES, Action, WITH_SHORTCUTS};
-use crate::canvas::{CanvasState, NavTool, Scene, ViewMode};
+use crate::canvas::{CanvasState, ImageTool, NavTool, Scene, ViewMode};
 use crate::crop::{Commit, CropMode, CropTool};
 use crate::gpu_preview::GpuPreview;
+use crate::retouch::RetouchTool;
 use crate::textures::{Slot, Texture, Textures};
 use crate::theme::{
     CHANNEL_STRIP_HEIGHT, INSPECTOR_WIDTH, PANEL_PADDING, STATUS_HEIGHT, TOKENS, TOP_BAR_HEIGHT,
 };
+use crate::tiling::TilingCheck;
 use crate::{channels, dialogs, inspector, status, toolbar};
 
 const NOTICE_DURATION: Duration = Duration::from_secs(6);
@@ -58,6 +60,9 @@ pub struct SeamsApp {
     pub dialog: Dialog,
     /// The Crop tool, while it is open.
     pub crop: Option<CropTool>,
+    /// The Retouch tool (clone and heal), while it is open.
+    pub retouch: Option<RetouchTool>,
+    pub tiling: TilingCheck,
     actions: Vec<Action>,
     files_hovering: bool,
 }
@@ -88,6 +93,8 @@ impl SeamsApp {
             notice: None,
             dialog: Dialog::None,
             crop: None,
+            retouch: None,
+            tiling: TilingCheck::default(),
             actions: Vec::new(),
             files_hovering: false,
         })
@@ -169,8 +176,12 @@ impl SeamsApp {
     fn on_event(&mut self, ctx: &Context, event: Event) {
         match event {
             Event::Opened(path) => {
-                // A frame drawn for the previous texture means nothing on this one.
+                // A frame or clone source set on the previous texture means
+                // nothing on this one.
                 self.crop = None;
+                if self.retouch.is_some() {
+                    self.retouch = Some(RetouchTool::new(&self.settings.retouch));
+                }
                 self.settings.remember_file(&path);
                 self.channel = Channel::BaseColor;
                 self.canvas.fit_to_window();
@@ -246,6 +257,9 @@ impl SeamsApp {
             Action::Redo => self.step_history(Session::redo, "Redo", "Nothing to redo"),
             Action::ApplyDelight => self.apply_delight(),
             Action::ToggleCrop => self.toggle_crop(),
+            Action::ToggleRetouch => self.toggle_retouch(),
+            Action::BakeSeamless => self.bake_seamless(),
+            Action::ToggleTilingCheck => self.tiling.toggle(),
             Action::PerspectiveCrop => self.perspective_crop(),
             Action::ApplyCrop => self.apply_crop(),
             Action::CancelCrop => self.crop = None,
@@ -323,6 +337,7 @@ impl SeamsApp {
         if self.crop.take().is_some() {
             return;
         }
+        self.retouch = None;
         let Some(base) = self.session.document().map(|document| document.base()) else { return };
         self.crop = Some(CropTool::new(base.width(), base.height()));
     }
@@ -428,8 +443,40 @@ impl SeamsApp {
         }
     }
 
+    /// Commits a finished retouch stroke and shows what the tool asked to.
+    fn finish_retouch(&mut self) {
+        let Some(retouch) = &mut self.retouch else { return };
+        let (finished, message) = (retouch.take_finished(), retouch.take_message());
+        if let Some(message) = message {
+            self.inform(message);
+        }
+        if let Some(image) = finished
+            && let Err(error) = self.session.commit_base(image)
+        {
+            self.report_error(format!("Could not apply the stroke: {error}"));
+        }
+    }
+
+    fn toggle_retouch(&mut self) {
+        if self.retouch.take().is_none() && self.has_document() {
+            self.crop = None;
+            self.retouch = Some(RetouchTool::new(&self.settings.retouch));
+        }
+    }
+
+    fn bake_seamless(&mut self) {
+        match self.session.bake_seamless() {
+            Ok(()) => self.inform("The result is now the base color, and the method is None"),
+            Err(error) => self.report_error(error.to_string()),
+        }
+    }
+
     fn show_canvas(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
+        if let (Some(retouch), Some(document)) = (&mut self.retouch, self.session.document()) {
+            retouch.sync_base(document.base());
+        }
+        self.tiling.update(&ctx, self.session.map_source());
         let before = self.textures.sync(&ctx, Slot::Before, self.session.before_view());
         let after = self.channel_texture(&ctx, self.channel);
         let scene = Scene {
@@ -439,13 +486,20 @@ impl SeamsApp {
             tiles: usize::from(self.settings.view.tiles),
             show_guides: self.settings.view.show_guides,
             checker: self.textures.checker(&ctx),
+            overlay: self.tiling.overlay_for(self.session.map_source()),
             loading: self.session.activity().loading,
             files_hovering: self.files_hovering,
         };
         let area = ui.max_rect();
-        if self.canvas.show(ui, &scene, self.crop.as_mut()) {
+        let tool = match (&mut self.crop, &mut self.retouch) {
+            (Some(crop), _) => Some(ImageTool::Crop(crop)),
+            (None, Some(retouch)) => Some(ImageTool::Retouch(retouch)),
+            (None, None) => None,
+        };
+        if self.canvas.show(ui, &scene, tool) {
             self.queue(Action::Open);
         }
+        self.finish_retouch();
         if scene.after.is_some() {
             toolbar::show_view_bar(self, &ctx, area);
         }
@@ -489,6 +543,16 @@ impl eframe::App for SeamsApp {
                 Some(true) => self.queue(Action::ApplyCrop),
                 Some(false) => self.queue(Action::CancelCrop),
                 None => {}
+            }
+        }
+        if let Some(retouch) = &mut self.retouch {
+            if self.session.document().is_none() {
+                self.retouch = None;
+            } else {
+                if self.dialog == Dialog::None {
+                    retouch.keys(ctx);
+                }
+                self.settings.retouch = retouch.settings();
             }
         }
         self.collect_shortcuts(ctx);

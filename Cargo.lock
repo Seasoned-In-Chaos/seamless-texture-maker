@@ -2065,7 +2065,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
 name = "seams"
-version = "4.0.0"
+version = "4.1.0"
 dependencies = [
  "eframe",
  "egui",
@@ -2081,7 +2081,7 @@ dependencies = [
 
 [[package]]
 name = "seams-core"
-version = "4.0.0"
+version = "4.1.0"
 dependencies = [
  "rayon",
  "serde",
@@ -2090,7 +2090,7 @@ dependencies = [
 
 [[package]]
 name = "seams-engine"
-version = "4.0.0"
+version = "4.1.0"
 dependencies = [
  "log",
  "seams-core",
@@ -2103,7 +2103,7 @@ dependencies = [
 
 [[package]]
 name = "seams-gpu"
-version = "4.0.0"
+version = "4.1.0"
 dependencies = [
  "bytemuck",
  "log",
@@ -2114,8 +2114,9 @@ dependencies = [
 
 [[package]]
 name = "seams-io"
-version = "4.0.0"
+version = "4.1.0"
 dependencies = [
+ "flate2",
  "image",
  "log",
  "png",

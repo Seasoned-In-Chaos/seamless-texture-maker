@@ -9,6 +9,7 @@ mod error;
 mod format;
 mod load;
 mod path;
+mod psd;
 mod save;
 
 pub use error::{IoError, Result};

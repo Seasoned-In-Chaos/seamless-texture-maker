@@ -3,6 +3,7 @@
 use egui::{DragValue, Frame, Margin, Panel, ScrollArea, Ui};
 use seams_core::delight::DelightParams;
 use seams_core::pbr::{HeightSource, MapKind, MaterialParams, NormalFilter, NormalFormat};
+use seams_core::retouch::{RetouchMode, SpotMethod};
 use seams_core::seamless::{Method, OverlapParams, SeamlessParams, SplatParams};
 use seams_engine::{Channel, SaveMode, Stage};
 use seams_io::FileFormat;
@@ -10,7 +11,9 @@ use seams_io::FileFormat;
 use crate::actions::Action;
 use crate::app::SeamsApp;
 use crate::crop::{CropMode, Ratio};
+use crate::retouch::{MAX_RADIUS, MIN_RADIUS};
 use crate::theme::{PANEL_PADDING, TOKENS};
+use crate::tiling;
 use crate::widgets::{self, Unit};
 
 const DELIGHT_PRESETS: [(DelightParams, &str); 3] = [
@@ -139,6 +142,10 @@ fn method_settings(ui: &mut Ui, params: &mut SeamlessParams) -> bool {
             widgets::hint(ui, "Mirror tiling has no settings.");
             false
         }
+        Method::None => {
+            widgets::hint(ui, "The base color is used as it is.");
+            false
+        }
         Method::Overlap => overlap_controls(ui, &mut params.overlap),
         Method::Splat => splat_controls(ui, &mut params.splat),
     }
@@ -166,9 +173,21 @@ fn seamless(app: &mut SeamsApp, ui: &mut Ui) {
         widgets::section(ui, "Material preset", |ui| changed |= material_presets(ui, params));
     }
     widgets::section(ui, "Settings", |ui| changed |= method_settings(ui, params));
+    let can_bake = params.method != Method::None && app.session.can_bake_seamless();
     if changed {
         app.session.edited();
     }
+    widgets::section(ui, "Retouch", |ui| {
+        widgets::hint(
+            ui,
+            "To paint out seams this method left, make the result the base color, then use \
+             the Retouch tool (J).",
+        );
+        ui.add_space(4.0);
+        if ui.add_enabled(can_bake, egui::Button::new("Use result as base")).clicked() {
+            app.queue(Action::BakeSeamless);
+        }
+    });
 }
 
 fn normal_controls(ui: &mut Ui, params: &mut MaterialParams) -> bool {
@@ -280,6 +299,114 @@ fn material(app: &mut SeamsApp, ui: &mut Ui) {
     }
 }
 
+const RETOUCH_MODES: [(RetouchMode, &str); 3] = [
+    (RetouchMode::Heal, "Heal"),
+    (RetouchMode::Clone, "Clone"),
+    (RetouchMode::SpotHeal, "Spot heal"),
+];
+const SPOT_METHODS: [(SpotMethod, &str); 2] =
+    [(SpotMethod::ContentAware, "Content-aware"), (SpotMethod::ProximityMatch, "Proximity")];
+
+/// The Retouch tool's options, shown in place of the stage's while it is open.
+fn retouch_panel(app: &mut SeamsApp, ui: &mut Ui) {
+    let Some(tool) = app.retouch.as_mut() else { return };
+    widgets::section(ui, "Tool", |ui| {
+        if let Some(mode) = widgets::segmented(ui, Some(tool.mode), &RETOUCH_MODES) {
+            tool.mode = mode;
+        }
+        let what = match tool.mode {
+            RetouchMode::Heal => {
+                "Copies detail from the source and matches it to the colour and light where it lands."
+            }
+            RetouchMode::Clone => "Copies the source's pixels exactly.",
+            RetouchMode::SpotHeal => {
+                "Paint over a blemish: it is filled from what surrounds it. No source needed."
+            }
+        };
+        widgets::hint(ui, what);
+        if tool.mode == RetouchMode::SpotHeal {
+            if let Some(method) = widgets::segmented(ui, Some(tool.spot), &SPOT_METHODS) {
+                tool.spot = method;
+            }
+            let how = match tool.spot {
+                SpotMethod::ContentAware => {
+                    "Rebuilds the area patch by patch from its surroundings."
+                }
+                SpotMethod::ProximityMatch => "Copies the nearby area that matches best. Faster.",
+            };
+            widgets::hint(ui, how);
+        }
+    });
+    widgets::section(ui, "Brush", |ui| {
+        let mut size = tool.brush.radius * 2.0;
+        let diameter = DragValue::new(&mut size)
+            .range(MIN_RADIUS * 2.0..=MAX_RADIUS * 2.0)
+            .speed(1.0)
+            .fixed_decimals(0)
+            .suffix(" px");
+        if widgets::row(ui, "Size", |ui| ui.add(diameter).changed()) {
+            tool.brush.radius = (size / 2.0).clamp(MIN_RADIUS, MAX_RADIUS);
+        }
+        widgets::slider(ui, "Hardness", &mut tool.brush.hardness, 0.0..=1.0, Unit::Percent);
+        widgets::slider(ui, "Opacity", &mut tool.brush.opacity, 0.01..=1.0, Unit::Percent);
+        widgets::slider(ui, "Flow", &mut tool.brush.flow, 0.01..=1.0, Unit::Percent);
+        widgets::slider(ui, "Spacing", &mut tool.brush.spacing, 0.01..=2.0, Unit::Percent);
+        widgets::slider(ui, "Smoothing", &mut tool.smoothing, 0.0..=0.95, Unit::Percent);
+        widgets::hint(
+            ui,
+            "Lower hardness gives a softer edge. Opacity caps a stroke; flow sets how fast overlapping dabs build up to it. Smoothing steadies a shaky line.",
+        );
+    });
+    widgets::section(ui, "Options", |ui| {
+        if tool.mode != RetouchMode::SpotHeal {
+            widgets::checkbox(ui, &mut tool.aligned, "Aligned");
+            widgets::checkbox(ui, &mut tool.overlay, "Show source under the brush");
+        }
+        widgets::checkbox(ui, &mut tool.wrap, "Wrap around edges");
+    });
+    if tool.mode != RetouchMode::SpotHeal {
+        widgets::section(ui, "Source", |ui| {
+            let status = if tool.has_source() {
+                "Source set."
+            } else {
+                "No source yet: Alt-click where to copy from."
+            };
+            widgets::hint(ui, status);
+            if tool.has_source() && ui.button("Clear source").clicked() {
+                tool.clear_source();
+            }
+        });
+    }
+    if tool.is_healing() {
+        widgets::hint(ui, "Healing the last stroke…");
+    }
+    widgets::hint(
+        ui,
+        "[ and ] change the size, Shift+[ and Shift+] the hardness. 1 to 0 set the opacity, Shift with them the flow. Alt+right-drag on the canvas: sideways for size, up and down for hardness. With Wrap on, strokes continue across the edges, so the texture keeps tiling; paint over tile borders in the Tiled view.",
+    );
+    ui.add_space(12.0);
+    if ui.button("Done").clicked() {
+        app.queue(Action::ToggleRetouch);
+    }
+}
+
+/// What the tiling check found, above the stage's settings while it is on.
+fn tiling_section(app: &mut SeamsApp, ui: &mut Ui) {
+    let source = app.session.map_source();
+    widgets::section(ui, "Tiling check", |ui| match app.tiling.report_for(source) {
+        Some(report) => {
+            ui.label(tiling::seam_summary(report));
+            ui.label(tiling::repeat_summary(report));
+            widgets::hint(
+                ui,
+                "Red marks seams, orange marks repeated areas. Tiled view shows them where tiles meet.",
+            );
+        }
+        None if app.tiling.is_running() => widgets::hint(ui, "Checking…"),
+        None => widgets::hint(ui, "Waiting for the result…"),
+    });
+}
+
 /// An editable size in whole pixels, within the sizes SEAMS takes.
 fn pixels(value: &mut f32) -> DragValue<'_> {
     DragValue::new(value).range(64.0..=8192.0).speed(1.0).fixed_decimals(0).suffix(" px")
@@ -384,8 +511,14 @@ pub fn show(app: &mut SeamsApp, ui: &mut Ui) {
     Panel::bottom("inspector-export").frame(padded).show(ui, |ui| export_footer(app, ui));
     padded.show(ui, |ui| {
         ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+            if app.tiling.on {
+                tiling_section(app, ui);
+            }
             if app.crop.is_some() {
                 return crop_panel(app, ui);
+            }
+            if app.retouch.is_some() {
+                return retouch_panel(app, ui);
             }
             match app.session.stage() {
                 Stage::Delight => delight(app, ui),

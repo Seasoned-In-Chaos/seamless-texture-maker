@@ -23,7 +23,7 @@ pub struct SaveOptions {
     pub bit_depth: BitDepth,
     /// JPEG quality, `1..=100`.
     pub jpeg_quality: u8,
-    /// Resolution to record, for formats that carry it (PNG, JPEG).
+    /// Resolution to record, for formats that carry it (PNG, JPEG, PSD).
     pub dpi: Option<(f32, f32)>,
 }
 
@@ -58,6 +58,9 @@ fn encode(image: &Image, format: FileFormat, options: &SaveOptions) -> Result<Ve
         FileFormat::Png => encode_png(image, sixteen, options.dpi),
         FileFormat::Jpeg => encode_jpeg(image, options),
         FileFormat::Exr => encode_exr(image),
+        FileFormat::Psd => {
+            crate::psd::encode(image, sixteen, options.dpi).map_err(|e| encode_error(format, e))
+        }
         FileFormat::Tiff | FileFormat::Tga => encode_generic(image, format, sixteen),
     }
 }

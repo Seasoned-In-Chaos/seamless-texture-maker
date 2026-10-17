@@ -1,88 +1,45 @@
 ---
 title: Quick Start
-description: Go from a photo to a seamless PBR material set in under 2 minutes.
+description: Go from a photo to a seamless PBR material set in a few minutes.
 ---
 
 # Quick Start
 
-Follow these 6 steps to create your first seamless PBR material:
-
 ## 1. Open an Image
 
-Press `Ctrl+O` or drag-and-drop an image onto the 2D viewport. SEAMS supports:
+Press `Ctrl+O`, drag an image onto the window, or double-click the empty canvas. SEAMS opens PNG, JPEG, TIFF, TGA, EXR and PSD, from 64 × 64 to 8192 × 8192 pixels, in 8-bit, 16-bit and float.
 
-- PNG, JPEG, TIFF, TGA, EXR
-- Minimum 64×64, maximum 8192×8192
-- 8-bit, 16-bit, and 32-bit float EXR depth
-- sRGB and linear color spaces
+## 2. Crop (Optional)
 
-The image appears in the viewport with file info in the navigation rail's Quick Info card.
+Press `C` for the Crop tool, or `Shift+C` for a perspective crop. Draw, move, resize or turn the frame, then press `Enter`. See [Crop, Retouch and Check](/pages/tools).
 
-## 2. Delight (Optional)
+## 3. Delight (Optional)
 
-Press `1` to switch to the Delight panel, or click the Delight icon in the navigation rail.
-
-1. Select an **Intensity Preset**: Soft, Balanced, or Aggressive
-2. Adjust sliders as needed (all default to 0 — no processing until you change them)
-3. Click **APPLY DELIGHT**
+Press `1`. Choose a preset (Soft, Balanced or Aggressive) or move the sliders, then click **Apply delight**. All sliders start at 0, so nothing changes until you move one.
 
 <Note>
-Delighting is destructive — it modifies the base image and pushes the previous state to the undo stack. You can undo with `Ctrl+Z` (up to 20 steps).
+Applying delight replaces the base color. Undo with `Ctrl+Z`, up to 20 steps.
 </Note>
 
-## 3. Make Seamless
+## 4. Make Seamless
 
-Press `2` to switch to the Seamless panel.
-
-1. Choose a **Method**: Offset + Cross-Fade, Mirror Tiling, Overlap Blend, or Splat Synthesis
-2. Adjust the controls for your chosen method
-3. The preview updates live as you move sliders
-4. After a 400ms pause, full-resolution processing runs automatically
+Press `2`. Pick a method and adjust it; the canvas updates as you drag.
 
 <Tip>
-Use **Offset + Cross-Fade** for a fast, predictable standard blend. Use **Mirror Tiling** when preserving every source detail and guaranteeing reflected edge continuity is most important. Use **Overlap Blend** for architectural textures and fabrics, or **Splat Synthesis** for organic materials where you want to break up repetition.
+**Offset cross-fade** is fast and predictable. **Mirror tiling** keeps every detail but is visibly symmetric. **Overlap blend** suits structured materials and fabrics. **Splat synthesis** breaks up repetition in organic materials.
 </Tip>
 
-## 4. Generate PBR Maps
+Switch the view bar to **Tiled** and turn on the tiling check (`Ctrl+Shift+T`) to see any seam or repeat that is left. To paint out what remains, click **Use result as base** and retouch with `J`.
 
-Press `3` to switch to the Material Lab.
+## 5. Generate Material Maps
 
-The PBR maps are generated automatically from your seamless texture:
-
-- **Normal** — Surface detail and direction
-- **Roughness** — Surface smoothness
-- **AO** — Ambient occlusion
-- **Displacement** — Tessellation displacement
-- **Opacity** — Transparency mask
-
-Adjust each map's controls, then select a channel in the dock at the bottom to preview it.
-
-## 5. Preview in 3D
-
-Switch to **Studio Mode** via the View menu or the toggle button at the bottom of the window.
-
-- The 3D viewport shows your PBR material on a mesh
-- Change **Mesh** (Sphere, Cube, Plane) and **HDRI** lighting (Studio, Outdoor, Archviz, Neutral Gray)
-- Enable **Tess** and adjust **Height** slider for displacement
-- Orbit with left-click, pan with right-click, zoom with scroll wheel
+Press `3`. The maps come from the seamless base color. Adjust each map's settings, and click a thumbnail under the canvas to look at it.
 
 ## 6. Export
 
-### Quick Export
-
-Press `Ctrl+S` to save the current seamless texture, or `Ctrl+E` to save the selected PBR map.
-
-### Full PBR Export
-
-Press `Ctrl+Shift+E` to open the Production Export dialog:
-
-1. Select your **Renderer** (UE5, Blender, V-Ray, Corona, Generic PBR)
-2. Adjust format, bit depth, resolution, and map toggles
-3. Set material name and output folder
-4. Click **Export**
-
-The exporter creates the selected texture-map files using renderer naming and format conventions. It does not create material scripts or sidecar files.
+- `Ctrl+S` saves the base color. Whether that makes a new file or replaces the original is set by the **Replace original file** checkbox above the export button.
+- `Ctrl+E` exports whatever is selected in the strip under the canvas: the base color or one of the maps.
 
 ---
 
-That's it! Explore the rest of the documentation for detailed controls, tips, and renderer-specific export guides.
+That is the whole workflow. The rest of the documentation covers each control in detail.

@@ -27,16 +27,17 @@ const OFFSET_CROSSFADE: i32 = 0;
 const MIRROR: i32 = 1;
 const OVERLAP: i32 = 2;
 
-/// Whether the GPU can preview `method`.
+/// Whether the GPU can preview `method`. None needs no preview work: the
+/// CPU result is the source itself.
 pub fn supports(method: Method) -> bool {
-    method != Method::Splat
+    !matches!(method, Method::Splat | Method::None)
 }
 
 /// Size of the result for a source of `size`: mirror tiling doubles it.
 pub fn output_size(method: Method, size: (u32, u32)) -> (u32, u32) {
     match method {
         Method::Mirror => (size.0.saturating_mul(2), size.1.saturating_mul(2)),
-        Method::OffsetCrossfade | Method::Overlap | Method::Splat => size,
+        Method::OffsetCrossfade | Method::Overlap | Method::Splat | Method::None => size,
     }
 }
 
@@ -89,7 +90,7 @@ impl Uniforms {
         let (width, height) = (size.0 as usize, size.1 as usize);
         let whole = [size.0 as i32, size.1 as i32];
         match params.method {
-            Method::OffsetCrossfade | Method::Splat => {
+            Method::OffsetCrossfade | Method::Splat | Method::None => {
                 let radius = feather_radius(width, height, params.fade_amount.0);
                 Self {
                     size: [whole[0], whole[1], whole[0], whole[1]],

@@ -1,4 +1,4 @@
-﻿[package]
+[package]
 name = "seams-io"
 description = "SEAMS image file reading and writing"
 version.workspace = true
@@ -17,6 +17,8 @@ serde = { workspace = true }
 image = { workspace = true }
 # Same version the image crate uses: read and write the PNG pHYs (DPI) chunk.
 png = "0.18"
+# PSD channel data compressed with ZIP.
+flate2 = "1"
 
 [dev-dependencies]
 tempfile = "3"

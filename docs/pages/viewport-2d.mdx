@@ -1,72 +1,52 @@
 ---
-title: 2D Viewport
-description: Zoom, pan, compare, and tile your textures in the 2D viewer.
+title: Canvas
+description: Zoom, pan, compare and tile your textures on the canvas.
 ---
 
-# 2D Viewport
+# Canvas
 
-The 2D viewport is where you view and compare your textures. It supports before/after comparison, tiled preview, and multi-channel inspection.
+The canvas is where you view and compare your textures.
 
 ## Opening an Image
 
-- **File dialog**: Press `Ctrl+O` or click Import Texture in the navigation rail
-- **Drag-and-drop**: Drop a file onto the viewport (`.png`, `.jpg`, `.jpeg`, `.tiff`, `.tif`, `.tga`, `.exr`)
-- **Double-click**: When no image is loaded, double-click the viewport to open the file dialog
+- **File dialog**: `Ctrl+O`, or File › Open texture
+- **Drag and drop**: drop a PNG, JPG, TIFF, TGA, EXR or PSD file on the window
+- **Double-click** the empty canvas
 
 ## View Modes
 
 | Mode | Description |
 |---|---|
-| **Split** | Draggable vertical split handle with BEFORE/AFTER labels |
-| **Side by Side** | Two panels with a gap, BEFORE on left, AFTER on right |
-| **Single** | Full-width view of the processed result |
+| **Result** | The processed result alone |
+| **Split** | A draggable divider with the original on the left and the result on the right |
+| **Side by side** | The original and the result next to each other |
+| **Tiled** | The result repeated 2 × 2, 3 × 3 or 4 × 4, to check that it tiles |
 
-Switch modes in the viewport toolbar.
+Switch modes in the view bar over the canvas. In the tiled view, **Guides** draws dashed lines where tiles meet.
 
-### Split View
-
-In Split mode, a draggable handle with `< >` grip divides the viewport. The left side shows the original image (BEFORE), and the right side shows the processed result (AFTER).
-
-## Tiled Preview
-
-Enable the **Tiled** toggle to see how your texture tiles:
-
-| Option | Layout |
-|---|---|
-| 2×2 | 4 tiles in a square grid |
-| 3×3 | 9 tiles |
-| 4×4 | 16 tiles |
-
-Dashed teal tile boundary guides show where each tile edge falls. This is essential for verifying seamless results.
-
-## Guides
-
-Toggle **Guides** on/off to show seam boundary indicators. Guides highlight where the offset cross-seam falls in the image.
-
-## Zoom & Pan
+## Zoom and Pan
 
 | Action | Control |
 |---|---|
-| Zoom | Mouse scroll wheel (10%–unlimited, ~0.083% per tick) |
+| Zoom | Scroll wheel, 10% per notch, about the pointer |
+| Zoom in / out | `Ctrl+=` / `Ctrl+-`, or the + and − buttons, through Photoshop's zoom levels |
+| Zoom tool | `Z`: click to zoom in, `Alt`-click to zoom out, drag right or left to zoom |
 | Pan | Middle-button drag, or left drag with the pan tool (`H`) or `Space` held |
-| Fit to view | Press `Ctrl+0` or click the Fit button |
+| Scroll sideways / up and down | `Shift` / `Alt` + scroll |
+| Fit to window | `Ctrl+0`, the Fit button, or a double-click |
+| Actual size | `Ctrl+1`, or click the zoom percentage |
 
-The current zoom percentage is displayed in the toolbar.
+The image cannot be panned out of sight: a large image stops at its edges, and a small one stays inside the window.
 
-## Channel Dock
+## Map Strip
 
-A horizontal scrollable strip at the bottom shows 8 channel cards. Click a card to:
-- Isolate that channel in the 3D viewport (Studio Mode)
-- Display it in the 2D viewer
-- Toggle it on/off for export
+The strip under the canvas has a thumbnail for the base color and each map. Click one to show it on the canvas and make it the export target.
 
-See [Material Lab](/pages/material-lab#channel-dock) for the full channel list.
+## Undo and Redo
 
-## Undo & Redo
+| Action | Shortcut |
+|---|---|
+| Undo | `Ctrl+Z` |
+| Redo | `Ctrl+Shift+Z` or `Ctrl+Y` |
 
-| Action | Shortcut | Stack Depth |
-|---|---|---|
-| Undo | `Ctrl+Z` | 20 steps |
-| Redo | `Ctrl+Y` | 20 steps |
-
-Each destructive action (image load, delight apply) pushes the current state to the undo stack and clears the redo stack. Undo restores the image, reloads the processor, and triggers a background full-resolution reprocess.
+Up to 20 steps. Applying delight, a crop, a retouch stroke or **Use result as base** each makes one step.

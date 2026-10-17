@@ -1,7 +1,7 @@
 #define MyAppName "Seamless Texture Maker"
 ; build.bat passes the version from Cargo.toml with /DMyAppVersion=...
 #ifndef MyAppVersion
-  #define MyAppVersion "4.0.0"
+  #define MyAppVersion "4.1.0"
 #endif
 #define MyAppPublisher "Shubham Panchasara"
 #define MyAppExeName "SEAMS.exe"

@@ -18,11 +18,15 @@ pub mod delight;
 pub mod error;
 pub mod filter;
 pub mod image;
+pub mod inpaint;
 pub mod key;
 pub mod pbr;
 pub mod perspective;
+pub mod poisson;
+pub mod retouch;
 pub mod rng;
 pub mod seamless;
+pub mod tiling;
 
 pub use error::{CoreError, Result};
 pub use image::Image;

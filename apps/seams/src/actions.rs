@@ -31,6 +31,12 @@ pub enum Action {
     ToggleCrop,
     /// Open the Crop tool in perspective mode.
     PerspectiveCrop,
+    /// Open or close the Retouch tool (clone and heal).
+    ToggleRetouch,
+    /// Make the seamless result the base color, with the method set to None.
+    BakeSeamless,
+    /// Show or hide the tiling check over the canvas.
+    ToggleTilingCheck,
     ApplyCrop,
     CancelCrop,
     SetStage(Stage),
@@ -86,6 +92,11 @@ pub const UNDO: Command = command(Action::Undo, "Undo", ctrl(Key::Z));
 pub const REDO: Command = command(Action::Redo, "Redo", ctrl_shift(Key::Z));
 pub const APPLY_DELIGHT: Command = command(Action::ApplyDelight, "Apply delight", None);
 pub const CROP: Command = command(Action::ToggleCrop, "Crop", key(Key::C));
+pub const RETOUCH: Command =
+    command(Action::ToggleRetouch, "Retouch (clone and heal)", key(Key::J));
+pub const BAKE_SEAMLESS: Command = command(Action::BakeSeamless, "Use result as base", None);
+pub const TILING_CHECK: Command =
+    command(Action::ToggleTilingCheck, "Check tiling", ctrl_shift(Key::T));
 pub const PERSPECTIVE_CROP: Command = command(
     Action::PerspectiveCrop,
     "Perspective crop",
@@ -112,7 +123,7 @@ pub const ABOUT: Command = command(Action::ShowAbout, "About SEAMS", None);
 /// A shortcut also matches with extra Shift held, so `Ctrl+Shift+S` comes
 /// before `Ctrl+S`, and modified shortcuts come before bare keys, so `Ctrl+1`
 /// is matched before `1`. The order follows Photoshop's menus.
-pub const WITH_SHORTCUTS: [&Command; 20] = [
+pub const WITH_SHORTCUTS: [&Command; 22] = [
     &OPEN,
     &SAVE_AS,
     &SAVE,
@@ -120,6 +131,7 @@ pub const WITH_SHORTCUTS: [&Command; 20] = [
     &EXIT,
     &REDO,
     &UNDO,
+    &TILING_CHECK,
     &ZOOM_IN,
     &ZOOM_OUT,
     &FIT_VIEW,
@@ -129,6 +141,7 @@ pub const WITH_SHORTCUTS: [&Command; 20] = [
     &ZOOM_TOOL,
     &PERSPECTIVE_CROP,
     &CROP,
+    &RETOUCH,
     &STAGE_DELIGHT,
     &STAGE_SEAMLESS,
     &STAGE_MATERIAL,

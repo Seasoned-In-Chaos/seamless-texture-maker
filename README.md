@@ -2,10 +2,16 @@
 
 A native desktop application for turning photos into seamless textures and PBR material maps. Written in Rust, with an egui interface rendered on the GPU.
 
-![Version](https://img.shields.io/badge/version-4.0.0-blue)
+![Version](https://img.shields.io/badge/version-4.1.0-blue)
 ![Rust](https://img.shields.io/badge/rust-1.90%2B-orange)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Platform](https://img.shields.io/badge/platform-Windows-blue)
+
+## See it in 30 seconds
+
+[![SEAMS intro video: seamless textures and PBR maps for archviz artists](docs/media/seams-intro-poster.jpg)](docs/media/seams-intro.mp4)
+
+**[▶ Watch the intro](docs/media/seams-intro.mp4)**: delighting, seamless tiling, PBR maps and the retouch tools, in half a minute.
 
 ## Features
 
@@ -26,11 +32,17 @@ Removes baked lighting from a photographed base colour: shadow, highlight and am
 
 Normal, roughness, ambient occlusion, displacement and opacity maps generated from one height source. Normal maps offer the 4-sample, Sobel 3x3 to 9x9 and dUdV filters, OpenGL or DirectX orientation, and tiling-aware sampling.
 
+### Crop and retouch
+
+- **Crop and perspective crop**: square up a photo of a wall or floor shot at an angle.
+- **Retouch**, Photoshop's three healing tools: **Heal** (copies detail and matches it to the colour and light where it lands), **Clone** (copies pixels exactly) and **Spot heal** (content-aware fill, no source needed). Size, hardness, opacity, flow, spacing and smoothing work as in Photoshop, with the same keys. With wrap on, strokes cross the edges, so the texture keeps tiling.
+- **Tiling check**: marks seams and repeats on the canvas and in the tiled view.
+
 ### Viewing and export
 
 - Result, split, side-by-side and tiled views, with pan and zoom.
 - Live previews on the GPU: the material maps and three of the four seamless methods follow a slider at full resolution.
-- PNG, JPG, TIFF, TGA and EXR import and export.
+- PNG, JPG, TIFF, TGA, EXR and Photoshop PSD import and export (PSB opens too).
 - Normal maps export at 16 bits per channel in PNG and TIFF. A 16-bit source keeps its depth.
 - Files are written atomically: an interrupted save never leaves a corrupt file.
 

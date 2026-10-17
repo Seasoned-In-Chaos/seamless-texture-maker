@@ -63,7 +63,8 @@
           ]
         },
         "pages/material-lab",
-        "pages/viewport-2d"
+        "pages/viewport-2d",
+        "pages/tools"
       ]
     },
     {

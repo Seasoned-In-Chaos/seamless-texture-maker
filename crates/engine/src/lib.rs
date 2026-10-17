@@ -18,5 +18,5 @@ pub use display::DisplayImage;
 pub use document::Document;
 pub use error::{EngineError, Result};
 pub use model::{Channel, Params, SaveMode, Stage};
-pub use session::{Activity, Event, Notify, Session, View};
-pub use settings::{Settings, ViewSettings, WindowSettings, app_data_dir};
+pub use session::{Activity, DISPLAY_MAX_SIDE, Event, Notify, Session, View};
+pub use settings::{RetouchSettings, Settings, ViewSettings, WindowSettings, app_data_dir};

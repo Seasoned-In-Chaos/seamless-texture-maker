@@ -167,11 +167,16 @@ impl Mapping {
         Self { origin: rect.min, scale: (rect.width() / image_size.x.max(1.0)).max(1e-6) }
     }
 
-    fn to_image(self, screen: Pos2) -> Pos2 {
+    /// Screen points per image pixel.
+    pub fn scale(self) -> f32 {
+        self.scale
+    }
+
+    pub fn to_image(self, screen: Pos2) -> Pos2 {
         ((screen - self.origin) / self.scale).to_pos2()
     }
 
-    fn to_screen(self, image: Pos2) -> Pos2 {
+    pub fn to_screen(self, image: Pos2) -> Pos2 {
         self.origin + image.to_vec2() * self.scale
     }
 }

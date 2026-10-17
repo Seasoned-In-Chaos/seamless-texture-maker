@@ -19,9 +19,11 @@ mod icons;
 mod inspector;
 mod logging;
 mod menu;
+mod retouch;
 mod status;
 mod textures;
 mod theme;
+mod tiling;
 mod toolbar;
 mod widgets;
 
